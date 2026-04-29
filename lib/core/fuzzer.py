@@ -277,6 +277,7 @@ class Fuzzer(BaseFuzzer):
         logger.info(f'THREAD-{threading.get_ident()} started"')
 
         while True:
+            should_quit = False
             try:
                 path = next(self._dictionary)
                 self.scan(self._base_path + path)
@@ -297,7 +298,10 @@ class Fuzzer(BaseFuzzer):
                     logger.info(f'THREAD-{threading.get_ident()} continued"')
 
                 if self._quit_event.is_set():
-                    break
+                    should_quit = True
+
+            if should_quit:
+                break
 
 
 class AsyncFuzzer(BaseFuzzer):

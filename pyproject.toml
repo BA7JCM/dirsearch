@@ -38,6 +38,11 @@ classifiers = [
     "Operating System :: OS Independent",
     "Topic :: Security",
     "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
 ]
 dynamic = ["version", "dependencies"]
 
@@ -45,11 +50,11 @@ dynamic = ["version", "dependencies"]
 dirsearch = "dirsearch.dirsearch:main"
 
 [project.optional-dependencies]
-mysql = ["mysql-connector-python==9.4.0"]
-postgresql = ["psycopg[binary]==3.2.13"]
+mysql = ["mysql-connector-python==9.6.0"]
+postgresql = ["psycopg[binary]==3.3.3"]
 db = [
-    "mysql-connector-python==9.4.0",
-    "psycopg[binary]==3.2.13",
+    "mysql-connector-python==9.6.0",
+    "psycopg[binary]==3.3.3",
 ]
 
 [project.urls]

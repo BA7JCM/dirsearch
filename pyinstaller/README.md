@@ -17,7 +17,7 @@ This directory contains the configuration for building standalone dirsearch exec
 
 ```bash
 # Install dependencies
-pip install -r requirements.txt pyinstaller==6.3.0
+pip install -r requirements.txt -r requirements/db.txt pyinstaller==6.20.0
 
 # Run PyInstaller
 pyinstaller pyinstaller/dirsearch.spec
@@ -33,14 +33,14 @@ chmod +x pyinstaller/build.sh
 ## GitHub Actions
 
 The workflow automatically builds for all platforms when:
-- A version tag is pushed (e.g., `v0.4.4RC1`)
+- A version tag is pushed (e.g., `v5.0.0RC1`)
 - Manually triggered via workflow_dispatch
 
 ### Triggering a Release
 
 ```bash
-git tag v0.4.4RC1
-git push origin v0.4.4RC1
+git tag v5.0.0RC1
+git push origin v5.0.0RC1
 ```
 
 This creates a GitHub Release with binaries for all platforms.

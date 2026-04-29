@@ -2,7 +2,7 @@
 
 ## Current Status
 
-Phase 1 is implemented for optional database dependencies. The codebase can now import the CLI entry module, session store, report manager, and non-database reports without `mysql-connector-python` or `psycopg[binary]` installed.
+Phase 1 is implemented for optional database dependencies. Phase 2 is implemented for the Python 3.14 / `5.0.0` release baseline.
 
 This is a useful foundation for a future MCP server or REST API because import-time side effects are lower and base installs no longer require database drivers. It is not yet a full supported API surface; that starts in Phase 3 with the importable agent API.
 
@@ -19,6 +19,21 @@ This is a useful foundation for a future MCP server or REST API because import-t
 - Removed controller/session top-level references to DB driver exception classes.
 - Added optional dependency regression tests in `tests/test_optional_db_dependencies.py`.
 - Verified the base Docker image builds without DB drivers.
+- Updated package version to `5.0.0`.
+- Added Python 3.10-3.14 classifiers while keeping `requires-python = ">=3.9"`.
+- Updated Docker to use `python:3.14-alpine`.
+- Updated CI to test Python 3.9, 3.11, and 3.14.
+- Updated PyInstaller release builds to Python 3.14 and PyInstaller 6.20.0.
+- Updated Nuitka release builds to Python 3.14 and Nuitka 4.0.8.
+- Updated release binary workflows/scripts to install `requirements/db.txt` so standalone builds keep DB report support.
+- Updated release docs and changelog for `5.0.0`.
+- Removed the Python 3.14 `SyntaxWarning` from threaded fuzzer shutdown handling.
+- Updated newer verified pins:
+  - `requests==2.33.1`
+  - `pyopenssl==26.1.0`
+  - `setuptools==82.0.1`
+  - `mysql-connector-python==9.6.0`
+  - `psycopg[binary]==3.3.3`
 
 ## Verification Run
 
@@ -29,21 +44,19 @@ This is a useful foundation for a future MCP server or REST API because import-t
 - `docker build -t dirsearch:optional-db-test .`
 - `docker run --rm --entrypoint python3 dirsearch:optional-db-test -m unittest tests.test_optional_db_dependencies tests.controller.test_session_store`
 - `docker run --rm --entrypoint python3 dirsearch:optional-db-test -c "import importlib.util; print(importlib.util.find_spec('mysql')); print(importlib.util.find_spec('psycopg'))"`
+- `/home/mauro/dirsearch/.venv/bin/python -m py_compile lib/core/fuzzer.py lib/core/settings.py setup.py tests/test_optional_db_dependencies.py`
+- `/home/mauro/dirsearch/.venv/bin/python -m unittest tests.test_optional_db_dependencies tests.controller.test_session_store tests.core.test_scanner`
+- `/home/mauro/dirsearch/.venv/bin/python dirsearch.py --version`
+- `/home/mauro/dirsearch/.venv/bin/python testing.py`
+- `/home/mauro/dirsearch/.venv/bin/python -m pip wheel . --no-deps --no-build-isolation -w /tmp/dirsearch-wheel-v5`
+- Wheel metadata inspection confirmed `Version: 5.0.0`, `Requires-Python: >=3.9`, Python 3.14 classifier, and DB extras.
+- `docker build -t dirsearch:v5-release-base .`
+- `docker run --rm dirsearch:v5-release-base --version`
+- `docker run --rm --entrypoint python3 dirsearch:v5-release-base testing.py`
+- `docker run --rm --entrypoint python3 dirsearch:v5-release-base dirsearch.py -u https://example.com -w tests/static/wordlist.txt -q`
+- `docker run --rm --entrypoint sh dirsearch:v5-release-base -c "python3 -m pip install . && python3 tests/check_packaged_install.py"`
 
 ## Next Phase
-
-### Phase 2: Python 3.14 Release Base
-
-- Update package version to `5.0.0`.
-- Update Python metadata and classifiers.
-- Update Docker base image and supported Python version docs.
-- Update CI matrix, PyInstaller workflow, Nuitka workflow, and release docs.
-- Review dependency pins for Python 3.14-compatible current versions.
-- Run release-base validation:
-  - Docker build with Python 3.14.
-  - `python3 testing.py`.
-  - CLI smoke test.
-  - packaged install smoke test.
 
 ### Phase 3: Importable Agent API
 

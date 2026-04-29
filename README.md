@@ -46,10 +46,10 @@ dirsearch runs on multiple platforms and can be used either via Python or standa
 
 | Platform | Python | Standalone Binary |
 |----------|--------|-------------------|
-| **Linux** (x86_64) | Python 3.9+ | `dirsearch-linux-amd64` |
-| **Windows** (x64) | Python 3.9+ | `dirsearch-windows-x64.exe` |
-| **macOS** (Intel) | Python 3.9+ | `dirsearch-macos-intel` |
-| **macOS** (Apple Silicon) | Python 3.9+ | `dirsearch-macos-silicon` |
+| **Linux** (x86_64) | Python 3.9-3.14 | `dirsearch-linux-amd64` |
+| **Windows** (x64) | Python 3.9-3.14 | `dirsearch-windows-x64.exe` |
+| **macOS** (Intel) | Python 3.9-3.14 | `dirsearch-macos-intel` |
+| **macOS** (Apple Silicon) | Python 3.9-3.14 | `dirsearch-macos-silicon` |
 
 Standalone binaries are self-contained executables that don't require Python installation.
 
@@ -63,7 +63,7 @@ Choose one of these installation options:
 
 - Install with **git**: `git clone https://github.com/maurosoria/dirsearch.git --depth 1` (**RECOMMENDED**)
 - Install with ZIP file: [Download here](https://github.com/maurosoria/dirsearch/archive/master.zip)
-- Install with Docker: `docker build -t "dirsearch:v0.4.3" .` (more information can be found [here](https://github.com/maurosoria/dirsearch#support-docker))
+- Install with Docker: `docker build -t "dirsearch:v5.0.0" .` (more information can be found [here](https://github.com/maurosoria/dirsearch#support-docker))
 - Install with PyPi: `pip3 install dirsearch` or `pip install dirsearch`
 - Install with Kali Linux: `sudo apt-get install dirsearch` (deprecated)
 
@@ -762,15 +762,15 @@ curl -fsSL https://get.docker.com | bash
 To create image
 
 ```sh
-docker build -t "dirsearch:v0.4.3" .
+docker build -t "dirsearch:v5.0.0" .
 ```
 
-> **dirsearch** is the name of the image and **v0.4.3** is the version
+> **dirsearch** is the name of the image and **v5.0.0** is the version
 
 ### Using dirsearch
 For using
 ```sh
-docker run -it --rm "dirsearch:v0.4.3" -u target -e php,html,js,zip
+docker run -it --rm "dirsearch:v5.0.0" -u target -e php,html,js,zip
 ```
 
 </details>
@@ -783,16 +783,16 @@ You can build standalone executables using PyInstaller. This creates a single bi
 
 ### Requirements
 
-- Python 3.9+
-- PyInstaller 6.3.0+
-- All dependencies from `requirements.txt`
+- Python 3.9-3.14
+- PyInstaller 6.20.0+
+- Dependencies from `requirements.txt` and `requirements/db.txt`
 
 ### Quick Build
 
 ```sh
 # Install dependencies
-pip install -r requirements.txt
-pip install pyinstaller==6.3.0
+pip install -r requirements.txt -r requirements/db.txt
+pip install pyinstaller==6.20.0
 
 # Build using the spec file
 pyinstaller pyinstaller/dirsearch.spec
@@ -866,7 +866,7 @@ dirsearch uses GitHub Actions for continuous integration and automated builds.
 
 | Workflow | Trigger | Description |
 |----------|---------|-------------|
-| **Inspection** (CI) | Push, PR | Runs tests, linting, and codespell on Python 3.9/3.11 across Ubuntu and Windows |
+| **Inspection** (CI) | Push, PR | Runs tests, linting, and codespell on Python 3.9/3.11/3.14 across Ubuntu and Windows |
 | **PyInstaller Linux** | Manual, Workflow call | Builds `dirsearch-linux-amd64` binary |
 | **PyInstaller Windows** | Manual, Workflow call | Builds `dirsearch-windows-x64.exe` binary |
 | **PyInstaller macOS Intel** | Manual, Workflow call | Builds `dirsearch-macos-intel` binary |
@@ -890,7 +890,7 @@ To create a new release with all platform binaries:
 
 1. Go to **Actions** > **PyInstaller Draft Release**
 2. Click **Run workflow**
-3. Enter the tag (e.g., `v0.4.4`)
+3. Enter the tag (e.g., `v5.0.0`)
 4. Select target branch
 5. Optionally mark as prerelease
 6. Review and publish the draft release
@@ -898,7 +898,7 @@ To create a new release with all platform binaries:
 ### Build Matrix
 
 The CI workflow tests on:
-- **Python versions:** 3.9, 3.11
+- **Python versions:** 3.9, 3.11, 3.14
 - **Operating systems:** Ubuntu (latest), Windows (latest)
 
 
