@@ -2,9 +2,9 @@
 
 ## Current Status
 
-Phase 1 is implemented for optional database dependencies. Phase 2 is implemented for the Python 3.14 / `5.0.0` release baseline. Phase 3 is implemented for the first importable Python API.
+Phase 1 is implemented for optional database dependencies. Phase 2 is implemented for the Python 3.14 / `5.0.0` release baseline. Phase 3 is implemented for the first importable Python API. Phase 4 is implemented for template wordlists and generation controls.
 
-This is a useful foundation for a future MCP server or REST API because import-time side effects are lower, base installs no longer require database drivers, and the first supported Python API surface is now available. The next work expands wordlist templates and generation controls.
+This is a useful foundation for a future MCP server or REST API because import-time side effects are lower, base installs no longer require database drivers, and the first supported Python API surface is now available. The next work adds the native wordlist implementation and benchmark gates.
 
 ## Completed
 
@@ -47,6 +47,13 @@ This is a useful foundation for a future MCP server or REST API because import-t
 - Added isolation coverage proving two configs do not leak state in one process.
 - Added packaged install smoke coverage for the public API imports.
 - Added optional DB and importable API coverage to `testing.py`.
+- Added shared template wordlist expansion for CLI and Python API callers.
+- Added named placeholders for subjects, CRUD/auth/admin ops, envs, separators, dates, DB/archive tokens, API versions, categories, and `%EXT%`.
+- Added curated template wordlists under `db/templates/`.
+- Added `--wordlist-status`.
+- Added `--wordlist-max-size` generation limits.
+- Added template wordlist regression coverage to `testing.py`.
+- Added the wordlist backend interface and `auto|python|native` selection.
 
 ## Verification Run
 
@@ -74,22 +81,16 @@ This is a useful foundation for a future MCP server or REST API because import-t
 - `docker build -t dirsearch:v5-importable-api .`
 - `docker run --rm --entrypoint python3 dirsearch:v5-importable-api testing.py`
 - `docker run --rm --entrypoint sh dirsearch:v5-importable-api -c "python3 -m pip install . && python3 tests/check_packaged_install.py"`
+- `/home/mauro/dirsearch/.venv/bin/python -m unittest tests.core.test_dictionary_templates tests.core.test_importable_api`
+- `/home/mauro/dirsearch/.venv/bin/python dirsearch.py --wordlist-status -w db/templates/crud.txt -e php`
+- `/home/mauro/dirsearch/.venv/bin/python dirsearch.py --wordlist-status -w db/templates/crud.txt -e php --wordlist-max-size 1`
 
 ## Next Phase
 
-### Phase 4: Template Wordlists
-
-- Add named placeholder expansion for `%SUBJECT%`, `%CRUD_OP%`, `%AUTH_OP%`, `%ADMIN_OP%`, `%ENV%`, `%SEP%`, date tokens, DB/archive tokens, `%API_VERSION%`, and `%CATEGORY:name%`.
-- Add curated template files under `db/templates/`.
-- Add `--wordlist-status`.
-- Add generation limits to prevent accidental huge expansions.
-
-### Later Phases
-
 ### Phase 5: Native Wordlist Backend
 
-- Add backend interface with Python backend first.
-- Add optional native backend with `auto|python|native` selection.
+- Add backend interface with Python backend first. (done)
+- Add optional native backend with `auto|python|native` selection. (selection done, native implementation pending)
 - Keep native output byte-for-byte compatible with Python output for ordering and deduplication.
 - Add opt-in large dictionary benchmark for generation time, iteration throughput, memory, and startup cost.
 

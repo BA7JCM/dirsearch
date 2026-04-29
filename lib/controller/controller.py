@@ -44,6 +44,7 @@ from lib.core.exceptions import (
     SkipTargetInterrupt,
     QuitInterrupt,
     UnpicklingError,
+    WordlistLimitError,
 )
 from lib.core.logger import enable_logging, logger
 from lib.core.settings import (
@@ -276,7 +277,11 @@ class Controller:
         else:
             options["headers"] = {**DEFAULT_HEADERS, **options["headers"]}
 
-        self.dictionary = Dictionary(files=options["wordlists"])
+        try:
+            self.dictionary = Dictionary(files=options["wordlists"])
+        except WordlistLimitError as e:
+            interface.error(str(e))
+            sys.exit(1)
         self.start_time = time.time()
         self.passed_urls: set[str] = set()
         self.directories: list[str] = []

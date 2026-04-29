@@ -33,6 +33,7 @@ from lib.core.settings import (
     WORDLIST_CATEGORIES,
     WORDLIST_CATEGORY_DIR,
 )
+from lib.core.wordlist_backend import WORDLIST_BACKENDS
 from lib.parse.cmdline import parse_arguments
 from lib.parse.config import ConfigParser
 from lib.parse.headers import HeadersParser
@@ -131,11 +132,13 @@ def parse_options() -> dict[str, Any]:
         except Exception as e:
             print("Error while parsing Nmap report: " + str(e))
             sys.exit(1)
-    elif not opt.urls:
+    elif not opt.urls and not opt.wordlist_status:
         print("URL target is missing, try using -u <url>")
         sys.exit(1)
 
-    if not opt.raw_file:
+    if opt.wordlist_status and not opt.urls:
+        opt.urls = []
+    elif not opt.raw_file:
         opt.urls = strip_and_uniquify(
             filter(
                 lambda url: not url.startswith("#"),
@@ -150,6 +153,17 @@ def parse_options() -> dict[str, Any]:
 
     if opt.thread_count < 1:
         print("Threads number must be greater than zero")
+        sys.exit(1)
+
+    if opt.wordlist_max_size < 1:
+        print("--wordlist-max-size must be greater than zero")
+        sys.exit(1)
+
+    if opt.wordlist_backend not in WORDLIST_BACKENDS:
+        print("--wordlist-backend must be one of: " + ", ".join(WORDLIST_BACKENDS))
+        sys.exit(1)
+    if opt.wordlist_backend == "native":
+        print("Native wordlist backend is not available in this build")
         sys.exit(1)
 
     if opt.tor:
@@ -484,6 +498,12 @@ def merge_config(opt: Values) -> Values:
     opt.wordlists = opt.wordlists or config.safe_get("dictionary", "wordlists")
     opt.wordlist_categories = opt.wordlist_categories or config.safe_get(
         "dictionary", "wordlist-categories"
+    )
+    opt.wordlist_backend = opt.wordlist_backend or config.safe_get(
+        "dictionary", "wordlist-backend", "auto"
+    )
+    opt.wordlist_max_size = opt.wordlist_max_size or config.safe_getint(
+        "dictionary", "wordlist-max-size", 500000
     )
     opt.extensions = opt.extensions or config.safe_get(
         "dictionary", "default-extensions", ""

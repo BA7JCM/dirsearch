@@ -18,8 +18,6 @@
 
 from __future__ import annotations
 
-import itertools
-import re
 import time
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
@@ -28,8 +26,9 @@ from urllib.parse import urljoin
 
 import requests
 
-from lib.core.settings import DEFAULT_HEADERS, EXTENSION_TAG
+from lib.core.settings import DEFAULT_HEADERS
 from lib.core.structures import OrderedSet
+from lib.core.wordlist_template import expand_template_line, normalize_placeholders
 from lib.utils.common import safequote
 
 
@@ -125,14 +124,7 @@ class WordlistTemplate:
     def _normalize_placeholders(
         placeholders: Mapping[str, Iterable[str] | str]
     ) -> dict[str, tuple[str, ...]]:
-        normalized: dict[str, tuple[str, ...]] = {}
-        for key, values in placeholders.items():
-            token = key if key.startswith("%") and key.endswith("%") else f"%{key}%"
-            if isinstance(values, str):
-                normalized[token.upper()] = (values,)
-            else:
-                normalized[token.upper()] = tuple(str(value) for value in values)
-        return normalized
+        return normalize_placeholders(placeholders)
 
     def render(
         self,
@@ -140,36 +132,14 @@ class WordlistTemplate:
         extensions: Iterable[str] = (),
         placeholders: Mapping[str, Iterable[str] | str] | None = None,
     ) -> Iterator[str]:
-        values = dict(self.placeholders)
-        values.update(self._normalize_placeholders(placeholders or {}))
-        values[EXTENSION_TAG.upper()] = tuple(extensions)
-
-        token_re = re.compile(r"%[A-Z0-9_:-]+%", re.IGNORECASE)
+        values = {f"%{key}%": value for key, value in self.placeholders.items()}
+        values.update(placeholders or {})
         for line in self.lines:
-            tokens = []
-            for token in token_re.findall(line):
-                normalized = token.upper()
-                if normalized in values and normalized not in tokens:
-                    tokens.append(normalized)
-
-            if not tokens:
-                yield line
-                continue
-
-            expansions = [values[token] for token in tokens]
-            if any(not expansion for expansion in expansions):
-                continue
-
-            for combo in itertools.product(*expansions):
-                rendered = line
-                for token, value in zip(tokens, combo):
-                    rendered = re.sub(
-                        re.escape(token),
-                        value,
-                        rendered,
-                        flags=re.IGNORECASE,
-                    )
-                yield rendered
+            yield from expand_template_line(
+                line,
+                extensions=extensions,
+                placeholders=values,
+            )
 
 
 @dataclass(frozen=True)

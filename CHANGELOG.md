@@ -8,6 +8,8 @@
 - Added `dirsearch[mysql]`, `dirsearch[postgresql]`, and `dirsearch[db]` install extras.
 - Updated Docker, CI, PyInstaller, and Nuitka release builds for the 5.0.0 baseline.
 - Added an importable Python API with `FuzzerConfig`, `DirsearchFuzzer`, structured results, wordlists, and template wordlists.
+- Added template wordlist placeholders, curated templates, `--wordlist-status`, and generation limits.
+- Added the initial wordlist backend interface with `auto`, `python`, and reserved `native` selection.
 - Ability to use multiple output formats
 - MySQL and PostgreSQL report formats
 - Support variables in file path and SQL table name for saving results

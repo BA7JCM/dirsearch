@@ -47,3 +47,11 @@ class QuitInterrupt(Exception):
 
 class UnpicklingError(Exception):
     pass
+
+
+class WordlistLimitError(Exception):
+    pass
+
+
+class WordlistBackendUnavailableError(Exception):
+    pass

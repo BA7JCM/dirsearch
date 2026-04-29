@@ -126,6 +126,9 @@ Wordlists (IMPORTANT)
   - To apply your extensions to wordlist entries that have extensions already, use **-O** | **--overwrite-extensions** (Note: some extensions are excluded from being overwritted such as *.log*, *.json*, *.xml*, ... or media extensions like *.jpg*, *.png*)
   - To use multiple wordlists, you can separate your wordlists with commas. Example: `wordlist1.txt,wordlist2.txt`.
   - Bundled wordlist categories live in `db/categories/` and can be selected with **--wordlist-categories**. Available: `extensions`, `conf`, `vcs`, `backups`, `db`, `logs`, `keys`, `web`, `common` (use `all` to include everything).
+  - Wordlist generation uses **--wordlist-backend=auto** by default. **python** selects the built-in backend and **native** requires a native backend build.
+  - Template wordlists live in `db/templates/` and support placeholders such as `%SUBJECT%`, `%CRUD_OP%`, `%AUTH_OP%`, `%ADMIN_OP%`, `%ENV%`, `%DATE%`, `%API_VERSION%`, `%CATEGORY:name%`, and `%EXT%`.
+  - Use **--wordlist-status** to preview resolved wordlist files and generated entry count before scanning. Use **--wordlist-max-size** to cap generation.
 
 <details>
 <summary><strong>Wordlist Examples (click to expand)</strong></summary>
@@ -214,6 +217,14 @@ Options:
                         Comma-separated wordlist category names (e.g.
                         common,conf,web). Use 'all' to include all bundled
                         categories
+    --wordlist-backend=BACKEND
+                        Wordlist generation backend: auto, python, native
+                        (default: auto)
+    --wordlist-status   Show resolved wordlist files and generated entry
+                        count, then exit
+    --wordlist-max-size=COUNT
+                        Maximum generated wordlist entries before aborting
+                        (default: 500000)
     -e EXTENSIONS, --extensions=EXTENSIONS
                         Extension list separated by commas (e.g. php,asp)
     -f, --force-extensions
