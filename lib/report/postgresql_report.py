@@ -16,8 +16,6 @@
 #
 #  Author: Mauro Soria
 
-import psycopg
-
 from lib.core.exceptions import InvalidURLException
 from lib.core.settings import DB_CONNECTION_TIMEOUT
 from lib.report.factory import BaseReport, SQLReportMixin
@@ -34,5 +32,7 @@ class PostgreSQLReport(SQLReportMixin, BaseReport):
     def connect(self, url):
         if not self.is_valid(url):
             raise InvalidURLException("Provided PostgreSQL URL does not start with postgresql://")
+
+        import psycopg
 
         return psycopg.connect(url, connect_timeout=DB_CONNECTION_TIMEOUT)

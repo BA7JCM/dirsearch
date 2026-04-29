@@ -87,6 +87,11 @@ def read_requirements(path: Path) -> list[str]:
 setuptools.setup(
     version=read_version(ROOT / "lib/core/settings.py"),
     install_requires=read_requirements(ROOT / "requirements/runtime.txt"),
+    extras_require={
+        "mysql": ["mysql-connector-python==9.4.0"],
+        "postgresql": ["psycopg[binary]==3.2.13"],
+        "db": read_requirements(ROOT / "requirements/db.txt"),
+    },
     entry_points={"console_scripts": ["dirsearch=dirsearch.dirsearch:main"]},
     packages=setuptools.find_packages(exclude=("dirsearch.tests", "dirsearch.tests.*")),
     package_data={

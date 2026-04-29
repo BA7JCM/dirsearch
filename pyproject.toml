@@ -44,6 +44,14 @@ dynamic = ["version", "dependencies"]
 [project.scripts]
 dirsearch = "dirsearch.dirsearch:main"
 
+[project.optional-dependencies]
+mysql = ["mysql-connector-python==9.4.0"]
+postgresql = ["psycopg[binary]==3.2.13"]
+db = [
+    "mysql-connector-python==9.4.0",
+    "psycopg[binary]==3.2.13",
+]
+
 [project.urls]
 Homepage = "https://github.com/maurosoria/dirsearch"
 

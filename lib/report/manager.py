@@ -24,9 +24,7 @@ from lib.report.csv_report import CSVReport
 from lib.report.html_report import HTMLReport
 from lib.report.json_report import JSONReport
 from lib.report.markdown_report import MarkdownReport
-from lib.report.mysql_report import MySQLReport
 from lib.report.plain_text_report import PlainTextReport
-from lib.report.postgresql_report import PostgreSQLReport
 from lib.report.simple_report import SimpleReport
 from lib.report.sqlite_report import SQLiteReport
 from lib.report.xml_report import XMLReport
@@ -40,8 +38,16 @@ output_handlers = {
     "csv": (CSVReport, [options["output_file"]]),
     "html": (HTMLReport, [options["output_file"]]),
     "sqlite": (SQLiteReport, [options["output_file"], options["output_table"]]),
-    "mysql": (MySQLReport, [options["mysql_url"], options["output_table"]]),
-    "postgresql": (PostgreSQLReport, [options["postgres_url"], options["output_table"]]),
+    "mysql": (
+        "lib.report.mysql_report",
+        "MySQLReport",
+        [options["mysql_url"], options["output_table"]],
+    ),
+    "postgresql": (
+        "lib.report.postgresql_report",
+        "PostgreSQLReport",
+        [options["postgres_url"], options["output_table"]],
+    ),
 }
 
 
@@ -51,9 +57,21 @@ class ReportManager:
 
         for format in formats:
             # No output location provided
-            if any(not _ for _ in output_handlers[format][1]):
+            handler = output_handlers[format]
+            sources = handler[-1]
+            if any(not _ for _ in sources):
                 continue
-            self.reports.append((output_handlers[format][0](), output_handlers[format][1]))
+            self.reports.append((self._load_report(handler)(), sources))
+
+    def _load_report(self, handler):
+        if len(handler) == 2:
+            return handler[0]
+
+        from importlib import import_module
+
+        module_name, class_name, _ = handler
+        module = import_module(module_name)
+        return getattr(module, class_name)
 
     def prepare(self, target):
         for reporter, sources in self.reports:

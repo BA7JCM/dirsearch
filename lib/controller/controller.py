@@ -21,14 +21,11 @@ from __future__ import annotations
 import asyncio
 import gc
 import os
-import sys
 import shutil
 import signal
 import sys
-import psycopg
 import re
 import time
-import mysql.connector
 from typing import Any
 
 from urllib.parse import urlparse
@@ -306,11 +303,7 @@ class Controller:
 
         try:
             self.reporter = ReportManager(options["output_formats"])
-        except (
-            InvalidURLException,
-            mysql.connector.Error,
-            psycopg.Error,
-        ) as e:
+        except InvalidURLException as e:
             logger.exception(e)
             interface.error(str(e))
             sys.exit(1)
