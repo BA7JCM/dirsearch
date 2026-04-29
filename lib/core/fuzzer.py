@@ -374,7 +374,7 @@ class AsyncFuzzer(BaseFuzzer):
         await self.setup_scanners()
         self.play()
 
-        for _ in range(len(self._dictionary)):
+        for _ in range(min(options["thread_count"], len(self._dictionary))):
             task = asyncio.create_task(self.task_proc())
             self._background_tasks.add(task)
             task.add_done_callback(self._background_tasks.discard)
@@ -421,13 +421,15 @@ class AsyncFuzzer(BaseFuzzer):
             callback(response)
 
     async def task_proc(self) -> None:
-        async with self.sem:
+        while True:
             await self._play_event.wait()
 
             try:
                 path = next(self._dictionary)
-                await self.scan(self._base_path + path)
             except StopIteration:
-                pass
-            finally:
-                await asyncio.sleep(options["delay"])
+                return
+
+            async with self.sem:
+                await self.scan(self._base_path + path)
+
+            await asyncio.sleep(options["delay"])
