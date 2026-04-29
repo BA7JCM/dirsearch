@@ -110,11 +110,20 @@ def timed(callable_, repeats: int) -> dict[str, float]:
 
 
 def bench_wordlist(files: list[str], extensions: tuple[str, ...], repeats: int) -> dict[str, Any]:
+    return bench_wordlist_backend("python", files, extensions, repeats)
+
+
+def bench_wordlist_backend(
+    backend: str,
+    files: list[str],
+    extensions: tuple[str, ...],
+    repeats: int,
+) -> dict[str, Any]:
     entries = 0
     peaks = []
     samples = []
 
-    with benchmark_options(extensions=extensions):
+    with benchmark_options(extensions=extensions, wordlist_backend=backend):
         for _ in range(repeats):
             tracemalloc.start()
             start = time.perf_counter()
@@ -127,7 +136,7 @@ def bench_wordlist(files: list[str], extensions: tuple[str, ...], repeats: int) 
             peaks.append(peak)
 
     return {
-        "backend": "python",
+        "backend": backend,
         "entries": entries,
         "files": files,
         "repeats": repeats,
@@ -136,6 +145,27 @@ def bench_wordlist(files: list[str], extensions: tuple[str, ...], repeats: int) 
         "max_s": max(samples),
         "peak_mib": max(peaks) / 1024 / 1024,
         "entries_per_s": entries / statistics.median(samples),
+    }
+
+
+def bench_native_http(base_url: str, paths: list[str], concurrency: int) -> dict[str, Any]:
+    import dirsearch_native
+
+    start = time.perf_counter()
+    results = dirsearch_native.scan_http(
+        base_url,
+        paths,
+        concurrency=concurrency,
+        timeout_secs=5,
+    )
+    elapsed = time.perf_counter() - start
+    return {
+        "backend": "rust-reqwest",
+        "concurrency": concurrency,
+        "requests": len(paths),
+        "elapsed_s": elapsed,
+        "requests_per_s": len(paths) / elapsed,
+        "ok": sum(1 for result in results if result.status == 200),
     }
 
 
@@ -242,6 +272,7 @@ def main() -> None:
     parser.add_argument("--concurrency", type=int, default=25)
     parser.add_argument("--wordlist-lines", type=int, default=2500)
     parser.add_argument("--wordlist-repeats", type=int, default=3)
+    parser.add_argument("--include-native", action="store_true")
     parser.add_argument("--json", action="store_true", dest="as_json")
     args = parser.parse_args()
 
@@ -259,6 +290,23 @@ def main() -> None:
                 args.wordlist_repeats,
             ),
         }
+
+        if args.include_native:
+            try:
+                results["native_wordlist_dicc"] = bench_wordlist_backend(
+                    "native",
+                    ["db/dicc.txt"],
+                    ("php", "json", "txt"),
+                    args.wordlist_repeats,
+                )
+                results["native_wordlist_template"] = bench_wordlist_backend(
+                    "native",
+                    [generated_wordlist],
+                    ("php", "json", "txt"),
+                    args.wordlist_repeats,
+                )
+            except Exception as error:
+                results["native_wordlist_error"] = str(error)
 
         paths = build_paths(args.requests)
         with local_http_server() as base_url:
@@ -279,6 +327,15 @@ def main() -> None:
                 args.concurrency,
                 "workers",
             )
+            if args.include_native:
+                try:
+                    results["rust_http"] = bench_native_http(
+                        base_url,
+                        paths,
+                        args.concurrency,
+                    )
+                except Exception as error:
+                    results["rust_http_error"] = str(error)
 
         if args.as_json:
             print(json.dumps(results, indent=2, sort_keys=True))

@@ -125,12 +125,41 @@ class PythonWordlistBackend:
             )
 
 
+class NativeWordlistBackend:
+    name = "native"
+
+    def __init__(self) -> None:
+        try:
+            import dirsearch_native
+        except ImportError as e:
+            raise WordlistBackendUnavailableError(
+                "Native wordlist backend is not available. "
+                "Build it with: python3 -m maturin develop --manifest-path native/Cargo.toml"
+            ) from e
+
+        self._native = dirsearch_native
+
+    def generate(self, files: list[str], is_blacklist: bool = False) -> list[str]:
+        if is_blacklist:
+            return PythonWordlistBackend().generate(files, is_blacklist=is_blacklist)
+
+        return self._native.generate_wordlist(
+            files,
+            list(options["extensions"]),
+            force_extensions=options["force_extensions"],
+            prefixes=list(options["prefixes"]),
+            suffixes=list(options["suffixes"]),
+            lowercase=options["lowercase"],
+            uppercase=options["uppercase"],
+            capitalization=options["capitalization"],
+            max_size=options["wordlist_max_size"],
+        )
+
+
 def get_wordlist_backend(name: str | None = None) -> WordlistBackend:
     backend = name or options["wordlist_backend"]
     if backend in ("auto", "python"):
         return PythonWordlistBackend()
     if backend == "native":
-        raise WordlistBackendUnavailableError(
-            "Native wordlist backend is not available in this build"
-        )
+        return NativeWordlistBackend()
     raise ValueError(f"Unknown wordlist backend: {backend}")

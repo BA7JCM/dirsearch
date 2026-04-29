@@ -162,9 +162,6 @@ def parse_options() -> dict[str, Any]:
     if opt.wordlist_backend not in WORDLIST_BACKENDS:
         print("--wordlist-backend must be one of: " + ", ".join(WORDLIST_BACKENDS))
         sys.exit(1)
-    if opt.wordlist_backend == "native":
-        print("Native wordlist backend is not available in this build")
-        sys.exit(1)
 
     if opt.tor:
         opt.proxies = list(DEFAULT_TOR_PROXIES)
