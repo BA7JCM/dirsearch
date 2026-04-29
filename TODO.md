@@ -4,7 +4,7 @@
 
 Phase 1 is implemented for optional database dependencies. Phase 2 is implemented for the Python 3.14 / `5.0.0` release baseline. Phase 3 is implemented for the first importable Python API.
 
-This is a useful foundation for a future MCP server or REST API because import-time side effects are lower and base installs no longer require database drivers. It is not yet a full supported API surface; that starts in Phase 3 with the importable agent API.
+This is a useful foundation for a future MCP server or REST API because import-time side effects are lower, base installs no longer require database drivers, and the first supported Python API surface is now available. The next work expands wordlist templates and generation controls.
 
 ## Completed
 
@@ -86,6 +86,18 @@ This is a useful foundation for a future MCP server or REST API because import-t
 
 ### Later Phases
 
-- Native wordlist backend with Python/native parity tests.
-- Opt-in large dictionary performance benchmark.
-- Final Docker release gate for base install, DB extras, Python backend, native backend, smoke tests, and importable API tests.
+### Phase 5: Native Wordlist Backend
+
+- Add backend interface with Python backend first.
+- Add optional native backend with `auto|python|native` selection.
+- Keep native output byte-for-byte compatible with Python output for ordering and deduplication.
+- Add opt-in large dictionary benchmark for generation time, iteration throughput, memory, and startup cost.
+
+### Phase 6: Final Docker Gate
+
+- Validate Docker base install without DB extras.
+- Validate Docker install with `dirsearch[db]`.
+- Run Python backend tests.
+- Run native backend tests.
+- Run large dictionary performance benchmark.
+- Run CLI smoke tests and importable API tests.
