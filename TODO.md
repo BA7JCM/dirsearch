@@ -2,7 +2,7 @@
 
 ## Current Status
 
-Phase 1 is implemented for optional database dependencies. Phase 2 is implemented for the Python 3.14 / `5.0.0` release baseline.
+Phase 1 is implemented for optional database dependencies. Phase 2 is implemented for the Python 3.14 / `5.0.0` release baseline. Phase 3 is implemented for the first importable Python API.
 
 This is a useful foundation for a future MCP server or REST API because import-time side effects are lower and base installs no longer require database drivers. It is not yet a full supported API surface; that starts in Phase 3 with the importable agent API.
 
@@ -34,6 +34,19 @@ This is a useful foundation for a future MCP server or REST API because import-t
   - `setuptools==82.0.1`
   - `mysql-connector-python==9.6.0`
   - `psycopg[binary]==3.3.3`
+- Added public imports:
+  - `FuzzerConfig`
+  - `DirsearchFuzzer`
+  - `FuzzerResult`
+  - `Wordlist`
+  - `WordlistTemplate`
+  - `WordlistState`
+- Added an importable API that runs from `FuzzerConfig` without caller-mutated CLI globals.
+- Added structured result and callback support.
+- Added template wordlist expansion for Python callers, including `%EXT%` and custom placeholders.
+- Added isolation coverage proving two configs do not leak state in one process.
+- Added packaged install smoke coverage for the public API imports.
+- Added optional DB and importable API coverage to `testing.py`.
 
 ## Verification Run
 
@@ -55,25 +68,24 @@ This is a useful foundation for a future MCP server or REST API because import-t
 - `docker run --rm --entrypoint python3 dirsearch:v5-release-base testing.py`
 - `docker run --rm --entrypoint python3 dirsearch:v5-release-base dirsearch.py -u https://example.com -w tests/static/wordlist.txt -q`
 - `docker run --rm --entrypoint sh dirsearch:v5-release-base -c "python3 -m pip install . && python3 tests/check_packaged_install.py"`
+- `/home/mauro/dirsearch/.venv/bin/python -m unittest tests.core.test_importable_api`
+- `/home/mauro/dirsearch/.venv/bin/python testing.py` (33 tests)
+- `/home/mauro/dirsearch/.venv/bin/python tests/check_packaged_install.py`
+- `docker build -t dirsearch:v5-importable-api .`
+- `docker run --rm --entrypoint python3 dirsearch:v5-importable-api testing.py`
+- `docker run --rm --entrypoint sh dirsearch:v5-importable-api -c "python3 -m pip install . && python3 tests/check_packaged_install.py"`
 
 ## Next Phase
 
-### Phase 3: Importable Agent API
+### Phase 4: Template Wordlists
 
-- Add public imports for:
-  - `FuzzerConfig`
-  - `DirsearchFuzzer`
-  - `FuzzerResult`
-  - `Wordlist`
-  - `WordlistTemplate`
-  - `WordlistState`
-- Remove supported API dependence on caller-mutated global options.
-- Add local script-style tests that import dirsearch, build template dictionaries, run a fuzzer, and receive structured results/callbacks.
-- Add an isolation test proving two fuzzer configs do not leak state in one process.
+- Add named placeholder expansion for `%SUBJECT%`, `%CRUD_OP%`, `%AUTH_OP%`, `%ADMIN_OP%`, `%ENV%`, `%SEP%`, date tokens, DB/archive tokens, `%API_VERSION%`, and `%CATEGORY:name%`.
+- Add curated template files under `db/templates/`.
+- Add `--wordlist-status`.
+- Add generation limits to prevent accidental huge expansions.
 
 ### Later Phases
 
-- Template wordlists and generation limits.
 - Native wordlist backend with Python/native parity tests.
 - Opt-in large dictionary performance benchmark.
 - Final Docker release gate for base install, DB extras, Python backend, native backend, smoke tests, and importable API tests.

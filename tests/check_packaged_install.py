@@ -24,11 +24,25 @@ def main() -> None:
     temp_dir = tempfile.mkdtemp(prefix="dirsearch-install-check-")
     os.chdir(temp_dir)
 
+    from dirsearch import (
+        DirsearchFuzzer,
+        FuzzerConfig,
+        FuzzerResult,
+        Wordlist,
+        WordlistState,
+        WordlistTemplate,
+    )
     from dirsearch.lib.core import settings
 
     expected_version = read_source_version()
     installed_version = importlib.metadata.version("dirsearch")
     assert installed_version == expected_version, (installed_version, expected_version)
+    assert DirsearchFuzzer
+    assert FuzzerConfig
+    assert FuzzerResult
+    assert Wordlist
+    assert WordlistState
+    assert WordlistTemplate
 
     package_root = Path(settings.__file__).resolve().parents[2]
     assert (package_root / "config.ini").is_file()

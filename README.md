@@ -67,6 +67,28 @@ Choose one of these installation options:
 - Install with PyPi: `pip3 install dirsearch` or `pip install dirsearch`
 - Install with Kali Linux: `sudo apt-get install dirsearch` (deprecated)
 
+### Python API
+
+dirsearch can also be used from Python code for local automation, MCP servers, or REST wrappers:
+
+```python
+from dirsearch import DirsearchFuzzer, FuzzerConfig, WordlistTemplate
+
+template = WordlistTemplate(
+    ["%SUBJECT%.%EXT%"],
+    placeholders={"SUBJECT": ["admin", "login"]},
+)
+config = FuzzerConfig(
+    url="https://example.com",
+    wordlist=template,
+    extensions=("php",),
+)
+
+results = DirsearchFuzzer(config).run()
+```
+
+The importable API keeps its configuration in `FuzzerConfig`; callers do not need to mutate CLI globals.
+
 
 Standalone Binaries
 ------------

@@ -20,8 +20,26 @@
 
 import sys
 
+from lib.core.api import (
+    DirsearchFuzzer,
+    FuzzerConfig,
+    FuzzerResult,
+    Wordlist,
+    WordlistState,
+    WordlistTemplate,
+)
 from lib.core.data import options
 from lib.core.options import parse_options
+
+__all__ = [
+    "main",
+    "DirsearchFuzzer",
+    "FuzzerConfig",
+    "FuzzerResult",
+    "Wordlist",
+    "WordlistState",
+    "WordlistTemplate",
+]
 
 if sys.version_info < (3, 9):
     sys.stderr.write("Sorry, dirsearch requires Python 3.9 or higher\n")
