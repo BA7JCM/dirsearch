@@ -31,7 +31,6 @@ hidden_imports += [
     'socks',
     'jinja2',
     'markupsafe',
-    'defusedxml',
     'OpenSSL',
     'cryptography',
     'ntlm_auth',
