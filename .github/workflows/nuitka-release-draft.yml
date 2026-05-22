@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag for the draft release (e.g., v0.4.3-nuitka)'
+        description: 'Tag for the draft release (e.g., v5.0.0-nuitka)'
         required: true
       target_commitish:
         description: 'Branch or commit for the tag (default: master)'

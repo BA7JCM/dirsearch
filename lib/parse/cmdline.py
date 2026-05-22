@@ -106,6 +106,27 @@ def parse_arguments() -> Values:
         ),
     )
     dictionary.add_option(
+        "--wordlist-backend",
+        action="store",
+        dest="wordlist_backend",
+        metavar="BACKEND",
+        help="Wordlist generation backend: auto, python, native (default: auto)",
+    )
+    dictionary.add_option(
+        "--wordlist-status",
+        action="store_true",
+        dest="wordlist_status",
+        help="Show resolved wordlist files and generated entry count, then exit",
+    )
+    dictionary.add_option(
+        "--wordlist-max-size",
+        action="store",
+        type="int",
+        dest="wordlist_max_size",
+        metavar="COUNT",
+        help="Maximum generated wordlist entries before aborting (default: 500000)",
+    )
+    dictionary.add_option(
         "-e",
         "--extensions",
         action="store",

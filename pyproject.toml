@@ -38,11 +38,24 @@ classifiers = [
     "Operating System :: OS Independent",
     "Topic :: Security",
     "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
 ]
 dynamic = ["version", "dependencies"]
 
 [project.scripts]
 dirsearch = "dirsearch.dirsearch:main"
+
+[project.optional-dependencies]
+mysql = ["mysql-connector-python==9.6.0"]
+postgresql = ["psycopg[binary]==3.3.3"]
+db = [
+    "mysql-connector-python==9.6.0",
+    "psycopg[binary]==3.3.3",
+]
 
 [project.urls]
 Homepage = "https://github.com/maurosoria/dirsearch"

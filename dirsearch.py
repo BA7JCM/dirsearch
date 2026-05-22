@@ -20,8 +20,27 @@
 
 import sys
 
+from lib.core.api import (
+    DirsearchFuzzer,
+    FuzzerConfig,
+    FuzzerResult,
+    Wordlist,
+    WordlistState,
+    WordlistTemplate,
+)
 from lib.core.data import options
+from lib.core.exceptions import WordlistLimitError
 from lib.core.options import parse_options
+
+__all__ = [
+    "main",
+    "DirsearchFuzzer",
+    "FuzzerConfig",
+    "FuzzerResult",
+    "Wordlist",
+    "WordlistState",
+    "WordlistTemplate",
+]
 
 if sys.version_info < (3, 9):
     sys.stderr.write("Sorry, dirsearch requires Python 3.9 or higher\n")
@@ -30,6 +49,23 @@ if sys.version_info < (3, 9):
 
 def main():
     options.update(parse_options())
+
+    if options["wordlist_status"]:
+        from lib.core.dictionary import Dictionary
+
+        try:
+            dictionary = Dictionary(files=options["wordlists"])
+        except WordlistLimitError as error:
+            print(str(error))
+            sys.exit(1)
+
+        print("Wordlist status")
+        print(f"Files: {len(options['wordlists'])}")
+        for wordlist in options["wordlists"]:
+            print(f"- {wordlist}")
+        print(f"Generated entries: {len(dictionary)}")
+        print(f"Generation limit: {options['wordlist_max_size']}")
+        sys.exit(0)
 
     if options["session_file"]:
         print("Loading a session file will override current options.")

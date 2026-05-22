@@ -21,7 +21,11 @@
 import unittest
 
 from tests.connection.test_dns import TestDNS  # noqa: F401
+from tests.controller.test_session_store import TestSessionStore  # noqa: F401
+from tests.core.test_dictionary_templates import TestDictionaryTemplates  # noqa: F401
+from tests.core.test_importable_api import TestImportableAPI  # noqa: F401
 from tests.core.test_scanner import TestScanner  # noqa: F401
+from tests.core.test_wordlist_backend import TestWordlistBackend  # noqa: F401
 from tests.parse.test_config import TestConfigParser  # noqa: F401
 from tests.parse.test_headers import TestHeadersParser  # noqa: F401
 from tests.parse.test_url import TestURLParsers  # noqa: F401
@@ -31,6 +35,7 @@ from tests.utils.test_diff import TestDiff  # noqa: F401
 from tests.utils.test_mimetype import TestMimeTypeUtils  # noqa: F401
 from tests.utils.test_random import TestRandom  # noqa: F401
 from tests.utils.test_schemedet import TestSchemedet  # noqa: F401
+from tests.test_optional_db_dependencies import TestOptionalDBDependencies  # noqa: F401
 
 
 if __name__ == "__main__":

@@ -21,14 +21,11 @@ from __future__ import annotations
 import asyncio
 import gc
 import os
-import sys
 import shutil
 import signal
 import sys
-import psycopg
 import re
 import time
-import mysql.connector
 from typing import Any
 
 from urllib.parse import urlparse
@@ -47,6 +44,7 @@ from lib.core.exceptions import (
     SkipTargetInterrupt,
     QuitInterrupt,
     UnpicklingError,
+    WordlistLimitError,
 )
 from lib.core.logger import enable_logging, logger
 from lib.core.settings import (
@@ -279,7 +277,11 @@ class Controller:
         else:
             options["headers"] = {**DEFAULT_HEADERS, **options["headers"]}
 
-        self.dictionary = Dictionary(files=options["wordlists"])
+        try:
+            self.dictionary = Dictionary(files=options["wordlists"])
+        except WordlistLimitError as e:
+            interface.error(str(e))
+            sys.exit(1)
         self.start_time = time.time()
         self.passed_urls: set[str] = set()
         self.directories: list[str] = []
@@ -306,11 +308,7 @@ class Controller:
 
         try:
             self.reporter = ReportManager(options["output_formats"])
-        except (
-            InvalidURLException,
-            mysql.connector.Error,
-            psycopg.Error,
-        ) as e:
+        except InvalidURLException as e:
             logger.exception(e)
             interface.error(str(e))
             sys.exit(1)

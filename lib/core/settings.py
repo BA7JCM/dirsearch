@@ -24,7 +24,7 @@ import time
 from lib.utils.file import FileUtils
 
 # Version format: <major version>.<minor version>.<revision>[.<month>]
-VERSION = "0.4.3"
+VERSION = "5.0.0"
 
 BANNER = f"""
   _|. _ _  _  _  _ _|_    v{VERSION}

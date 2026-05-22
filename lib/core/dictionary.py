@@ -17,21 +17,11 @@
 #  Author: Mauro Soria
 
 from __future__ import annotations
-
-import re
 from typing import Any, Iterator
 
-from lib.core.data import options
 from lib.core.decorators import locked
-from lib.core.settings import (
-    SCRIPT_PATH,
-    EXTENSION_TAG,
-    EXCLUDE_OVERWRITE_EXTENSIONS,
-    EXTENSION_RECOGNITION_REGEX,
-)
-from lib.core.structures import OrderedSet
-from lib.parse.url import clean_path
-from lib.utils.common import lstrip_once
+from lib.core.settings import SCRIPT_PATH
+from lib.core.wordlist_backend import get_wordlist_backend
 from lib.utils.file import FileUtils
 
 
@@ -114,100 +104,7 @@ class Dictionary:
                 append line unmodified.
         """
 
-        wordlist = OrderedSet()
-        re_ext_tag = re.compile(EXTENSION_TAG, re.IGNORECASE)
-
-        for dict_file in files:
-            for line in FileUtils.get_lines(dict_file):
-                # Removing leading "/" to work with prefixes later
-                line = lstrip_once(line, "/")
-
-                if not self.is_valid(line):
-                    continue
-
-                # Classic dirsearch wordlist processing (with %EXT% keyword)
-                if EXTENSION_TAG in line.lower():
-                    for extension in options["extensions"]:
-                        newline = re_ext_tag.sub(extension, line)
-                        wordlist.add(newline)
-                else:
-                    wordlist.add(line)
-
-                    # "Forcing extensions" and "overwriting extensions" shouldn't apply to
-                    # blacklists otherwise it might cause false negatives
-                    if is_blacklist:
-                        continue
-
-                    # If "forced extensions" is used and the path is not a directory (terminated by /)
-                    # or has had an extension already, append extensions to the path
-                    if (
-                        options["force_extensions"]
-                        and "." not in line
-                        and not line.endswith("/")
-                    ):
-                        wordlist.add(line + "/")
-
-                        for extension in options["extensions"]:
-                            wordlist.add(f"{line}.{extension}")
-                    # Overwrite unknown extensions with selected ones (but also keep the origin)
-                    elif (
-                        options["overwrite_extensions"]
-                        and not line.endswith(options["extensions"] + EXCLUDE_OVERWRITE_EXTENSIONS)
-                        # Paths that have queries in wordlist are usually used for exploiting
-                        # disclosed vulnerabilities of services, skip such paths
-                        and "?" not in line
-                        and "#" not in line
-                        and re.search(EXTENSION_RECOGNITION_REGEX, line)
-                    ):
-                        base = line.split(".")[0]
-
-                        for extension in options["extensions"]:
-                            wordlist.add(f"{base}.{extension}")
-
-        if not is_blacklist:
-            # Appending prefixes and suffixes
-            altered_wordlist = OrderedSet()
-
-            for path in wordlist:
-                for pref in options["prefixes"]:
-                    if (
-                        not path.startswith(("/", pref))
-                    ):
-                        altered_wordlist.add(pref + path)
-                for suff in options["suffixes"]:
-                    if (
-                        not path.endswith(("/", suff))
-                        # Appending suffixes to the URL fragment is useless
-                        and "?" not in path
-                        and "#" not in path
-                    ):
-                        altered_wordlist.add(path + suff)
-
-            if altered_wordlist:
-                wordlist = altered_wordlist
-
-        if options["lowercase"]:
-            return list(map(str.lower, wordlist))
-        elif options["uppercase"]:
-            return list(map(str.upper, wordlist))
-        elif options["capitalization"]:
-            return list(map(str.capitalize, wordlist))
-        else:
-            return list(wordlist)
-
-    def is_valid(self, path: str) -> bool:
-        # Skip comments and empty lines
-        if not path or path.startswith("#"):
-            return False
-
-        # Skip if the path has excluded extensions
-        cleaned_path = clean_path(path)
-        if cleaned_path.endswith(
-            tuple(f".{extension}" for extension in options["exclude_extensions"])
-        ):
-            return False
-
-        return True
+        return get_wordlist_backend().generate(files, is_blacklist=is_blacklist)
 
     def add_extra(self, path) -> None:
         if path in self._items or path in self._extra:

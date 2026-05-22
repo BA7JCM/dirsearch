@@ -22,9 +22,6 @@ import json
 import os
 from typing import Any
 
-import mysql.connector
-import psycopg
-
 from lib.core.exceptions import InvalidURLException, UnpicklingError
 from lib.core.logger import logger
 from lib.report.manager import ReportManager
@@ -185,11 +182,7 @@ class SessionStore:
         )
         try:
             controller.reporter = ReportManager(self.options["output_formats"])
-        except (
-            InvalidURLException,
-            mysql.connector.Error,
-            psycopg.Error,
-        ) as error:
+        except InvalidURLException as error:
             logger.exception(error)
             interface.error(str(error))
             raise SystemExit(1)

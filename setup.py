@@ -85,8 +85,30 @@ def read_requirements(path: Path) -> list[str]:
 
 
 setuptools.setup(
+    name="dirsearch",
+    description="Advanced web path scanner",
     version=read_version(ROOT / "lib/core/settings.py"),
+    python_requires=">=3.9",
+    classifiers=[
+        "Programming Language :: Python",
+        "Environment :: Console",
+        "Intended Audience :: Information Technology",
+        "License :: OSI Approved :: GNU General Public License v2 (GPLv2)",
+        "Operating System :: OS Independent",
+        "Topic :: Security",
+        "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14",
+    ],
     install_requires=read_requirements(ROOT / "requirements/runtime.txt"),
+    extras_require={
+        "mysql": ["mysql-connector-python==9.6.0"],
+        "postgresql": ["psycopg[binary]==3.3.3"],
+        "db": read_requirements(ROOT / "requirements/db.txt"),
+    },
     entry_points={"console_scripts": ["dirsearch=dirsearch.dirsearch:main"]},
     packages=setuptools.find_packages(exclude=("dirsearch.tests", "dirsearch.tests.*")),
     package_data={

@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag for the draft release (e.g., v0.4.3)'
+        description: 'Tag for the draft release (e.g., v5.0.0)'
         required: true
       target_commitish:
         description: 'Branch or commit for the tag (default: master)'
@@ -23,8 +23,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  PYTHON_VERSION: '3.11'
-  PYINSTALLER_VERSION: '6.3.0'
+  PYTHON_VERSION: '3.14'
+  PYINSTALLER_VERSION: '6.20.0'
 
 jobs:
   build-linux:

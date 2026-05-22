@@ -16,9 +16,6 @@
 #
 #  Author: Mauro Soria
 
-import mysql.connector
-
-from mysql.connector.constants import SQLMode
 from urllib.parse import urlparse
 
 from lib.core.exceptions import InvalidURLException
@@ -37,6 +34,9 @@ class MySQLReport(SQLReportMixin, BaseReport):
     def connect(self, url):
         if not self.is_valid(url):
             raise InvalidURLException("Provided MySQL URL does not start with mysql://")
+
+        import mysql.connector
+        from mysql.connector.constants import SQLMode
 
         parsed = urlparse(url)
         conn = mysql.connector.connect(

@@ -56,8 +56,8 @@ build() {
     # Install dependencies
     log_info "Installing dependencies..."
     $PYTHON_CMD -m pip install --upgrade pip setuptools wheel
-    $PYTHON_CMD -m pip install -r requirements.txt
-    $PYTHON_CMD -m pip install pyinstaller==6.3.0
+    $PYTHON_CMD -m pip install -r requirements.txt -r requirements/db.txt
+    $PYTHON_CMD -m pip install pyinstaller==6.20.0
 
     # Build
     log_info "Running PyInstaller..."
@@ -95,6 +95,8 @@ build() {
         --hidden-import=requests_ntlm \
         --hidden-import=bs4 \
         --hidden-import=colorama \
+        --hidden-import=mysql.connector \
+        --hidden-import=psycopg \
         --hidden-import=defusedcsv \
         --hidden-import=httpx_ntlm \
         --hidden-import=httpcore \
