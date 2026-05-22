@@ -21,6 +21,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from lib.connection.requester import AsyncRequester, Requester
+from lib.connection.native import NativeHTTPBackend
 from lib.core.data import options
 from lib.core.dictionary import Dictionary
 
@@ -149,23 +150,21 @@ def bench_wordlist_backend(
 
 
 def bench_native_http(base_url: str, paths: list[str], concurrency: int) -> dict[str, Any]:
-    import dirsearch_native
+    with benchmark_options(thread_count=concurrency):
+        backend = NativeHTTPBackend()
+        start = time.perf_counter()
+        results = list(backend.scan(base_url, paths))
+        elapsed = time.perf_counter() - start
 
-    start = time.perf_counter()
-    results = dirsearch_native.scan_http(
-        base_url,
-        paths,
-        concurrency=concurrency,
-        timeout_secs=5,
-    )
-    elapsed = time.perf_counter() - start
+    responses = [response for _, response, error in results if error is None]
     return {
         "backend": "rust-reqwest",
         "concurrency": concurrency,
         "requests": len(paths),
         "elapsed_s": elapsed,
         "requests_per_s": len(paths) / elapsed,
-        "ok": sum(1 for result in results if result.status == 200),
+        "errors": sum(1 for _, _, error in results if error is not None),
+        "ok": sum(1 for response in responses if response.status == 200),
     }
 
 

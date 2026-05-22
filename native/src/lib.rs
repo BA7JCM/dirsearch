@@ -16,6 +16,12 @@ struct NativeHttpResult {
     length: usize,
     #[pyo3(get)]
     elapsed_ms: f64,
+    #[pyo3(get)]
+    error: Option<String>,
+    #[pyo3(get)]
+    headers: Vec<(String, String)>,
+    #[pyo3(get)]
+    body: Vec<u8>,
 }
 
 #[pyfunction]
@@ -25,9 +31,12 @@ struct NativeHttpResult {
     force_extensions=false,
     prefixes=Vec::new(),
     suffixes=Vec::new(),
+    exclude_extensions=Vec::new(),
+    overwrite_exclude_extensions=Vec::new(),
     lowercase=false,
     uppercase=false,
     capitalization=false,
+    overwrite_extensions=false,
     max_size=None,
 ))]
 fn generate_wordlist(
@@ -36,9 +45,12 @@ fn generate_wordlist(
     force_extensions: bool,
     prefixes: Vec<String>,
     suffixes: Vec<String>,
+    exclude_extensions: Vec<String>,
+    overwrite_exclude_extensions: Vec<String>,
     lowercase: bool,
     uppercase: bool,
     capitalization: bool,
+    overwrite_extensions: bool,
     max_size: Option<usize>,
 ) -> PyResult<Vec<String>> {
     let file_lines: Vec<Vec<String>> = files
@@ -49,9 +61,9 @@ fn generate_wordlist(
     let mut wordlist = IndexSet::new();
     for lines in file_lines {
         for raw_line in lines {
-            let line = raw_line.trim_start_matches('/').to_string();
+            let line = lstrip_once(&raw_line, "/");
             for expanded in expand_ext(&line, &extensions) {
-                if !is_valid(&expanded) {
+                if !is_valid(&expanded, &exclude_extensions) {
                     continue;
                 }
 
@@ -61,6 +73,17 @@ fn generate_wordlist(
                     add_entry(&mut wordlist, format!("{expanded}/"), max_size)?;
                     for extension in &extensions {
                         add_entry(&mut wordlist, format!("{expanded}.{extension}"), max_size)?;
+                    }
+                } else if overwrite_extensions
+                    && should_overwrite_extension(
+                        &expanded,
+                        &extensions,
+                        &overwrite_exclude_extensions,
+                    )
+                {
+                    let base = expanded.split('.').next().unwrap_or_default();
+                    for extension in &extensions {
+                        add_entry(&mut wordlist, format!("{base}.{extension}"), max_size)?;
                     }
                 }
             }
@@ -76,7 +99,11 @@ fn generate_wordlist(
                 }
             }
             for suffix in &suffixes {
-                if !path.ends_with('/') && !path.ends_with(suffix) && !path.contains('?') && !path.contains('#') {
+                if !path.ends_with('/')
+                    && !path.ends_with(suffix)
+                    && !path.contains('?')
+                    && !path.contains('#')
+                {
                     add_entry(&mut altered, format!("{path}{suffix}"), max_size)?;
                 }
             }
@@ -93,6 +120,10 @@ fn generate_wordlist(
     Ok(items)
 }
 
+fn lstrip_once(input: &str, pattern: &str) -> String {
+    input.strip_prefix(pattern).unwrap_or(input).to_string()
+}
+
 #[pyfunction]
 #[pyo3(signature = (
     base_url,
@@ -100,6 +131,9 @@ fn generate_wordlist(
     concurrency=25,
     timeout_secs=7.5,
     headers=Vec::new(),
+    max_retries=0,
+    follow_redirects=false,
+    max_body_size=83886080,
 ))]
 fn scan_http(
     py: Python<'_>,
@@ -108,6 +142,9 @@ fn scan_http(
     concurrency: usize,
     timeout_secs: f64,
     headers: Vec<(String, String)>,
+    max_retries: usize,
+    follow_redirects: bool,
+    max_body_size: usize,
 ) -> PyResult<Vec<NativeHttpResult>> {
     py.allow_threads(move || {
         let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -129,6 +166,11 @@ fn scan_http(
             let client = reqwest::Client::builder()
                 .danger_accept_invalid_certs(true)
                 .default_headers(header_map)
+                .redirect(if follow_redirects {
+                    reqwest::redirect::Policy::limited(10)
+                } else {
+                    reqwest::redirect::Policy::none()
+                })
                 .timeout(std::time::Duration::from_secs_f64(timeout_secs))
                 .pool_max_idle_per_host(concurrency)
                 .build()
@@ -142,18 +184,84 @@ fn scan_http(
                 let base_url = base_url.clone();
                 let semaphore = semaphore.clone();
                 tasks.push(tokio::spawn(async move {
-                    let _permit = semaphore.acquire_owned().await.map_err(|error| error.to_string())?;
+                    let _permit = match semaphore.acquire_owned().await {
+                        Ok(permit) => permit,
+                        Err(error) => {
+                            return NativeHttpResult {
+                                path,
+                                status: 0,
+                                length: 0,
+                                elapsed_ms: 0.0,
+                                error: Some(error.to_string()),
+                                headers: Vec::new(),
+                                body: Vec::new(),
+                            };
+                        }
+                    };
                     let url = format!("{base_url}{path}");
                     let start = Instant::now();
-                    let response = client.get(url).send().await.map_err(|error| error.to_string())?;
+                    let mut response = None;
+                    let mut last_error = None;
+                    for _ in 0..=max_retries {
+                        match client.get(&url).send().await {
+                            Ok(value) => {
+                                response = Some(value);
+                                last_error = None;
+                                break;
+                            }
+                            Err(error) => last_error = Some(error.to_string()),
+                        }
+                    }
+                    let response = match response {
+                        Some(response) => response,
+                        None => {
+                            return NativeHttpResult {
+                                path,
+                                status: 0,
+                                length: 0,
+                                elapsed_ms: start.elapsed().as_secs_f64() * 1000.0,
+                                error: last_error,
+                                headers: Vec::new(),
+                                body: Vec::new(),
+                            };
+                        }
+                    };
                     let status = response.status().as_u16();
-                    let body = response.bytes().await.map_err(|error| error.to_string())?;
-                    Ok::<NativeHttpResult, String>(NativeHttpResult {
+                    let headers = response
+                        .headers()
+                        .iter()
+                        .map(|(name, value)| {
+                            (
+                                name.as_str().to_string(),
+                                value.to_str().unwrap_or_default().to_string(),
+                            )
+                        })
+                        .collect::<Vec<_>>();
+                    let body = match response.bytes().await {
+                        Ok(body) => body,
+                        Err(error) => {
+                            return NativeHttpResult {
+                                path,
+                                status,
+                                length: 0,
+                                elapsed_ms: start.elapsed().as_secs_f64() * 1000.0,
+                                error: Some(error.to_string()),
+                                headers,
+                                body: Vec::new(),
+                            };
+                        }
+                    };
+                    let length = body.len();
+                    let body = body[..length.min(max_body_size)].to_vec();
+                    NativeHttpResult {
                         path,
                         status,
-                        length: body.len(),
+                        length,
                         elapsed_ms: start.elapsed().as_secs_f64() * 1000.0,
-                    })
+                        error: None,
+                        headers,
+                        body,
+                    }
                 }));
             }
 
@@ -161,8 +269,7 @@ fn scan_http(
             for task in tasks {
                 let result = task
                     .await
-                    .map_err(|error| PyRuntimeError::new_err(error.to_string()))?
-                    .map_err(PyRuntimeError::new_err)?;
+                    .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
                 results.push(result);
             }
             Ok(results)
@@ -171,7 +278,8 @@ fn scan_http(
 }
 
 fn read_lines(path: &str) -> PyResult<Vec<String>> {
-    let content = fs::read_to_string(path).map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+    let content = fs::read(path).map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+    let content = String::from_utf8_lossy(&content);
     Ok(content.lines().map(str::to_string).collect())
 }
 
@@ -202,11 +310,71 @@ fn replace_case_insensitive(input: &str, needle: &str, replacement: &str) -> Str
     output
 }
 
-fn is_valid(path: &str) -> bool {
-    !path.is_empty() && !path.starts_with('#')
+fn is_valid(path: &str, exclude_extensions: &[String]) -> bool {
+    if path.is_empty() || path.starts_with('#') {
+        return false;
+    }
+
+    let cleaned_path = clean_path(path);
+    !exclude_extensions
+        .iter()
+        .any(|extension| cleaned_path.ends_with(&format!(".{extension}")))
 }
 
-fn add_entry(wordlist: &mut IndexSet<String>, path: String, max_size: Option<usize>) -> PyResult<()> {
+fn clean_path(path: &str) -> &str {
+    path.split(['?', '#']).next().unwrap_or(path)
+}
+
+fn should_overwrite_extension(
+    path: &str,
+    extensions: &[String],
+    overwrite_exclude_extensions: &[String],
+) -> bool {
+    if path.ends_with('/') || path.contains('?') || path.contains('#') {
+        return false;
+    }
+
+    if extensions
+        .iter()
+        .chain(overwrite_exclude_extensions.iter())
+        .any(|extension| path.ends_with(extension))
+    {
+        return false;
+    }
+
+    has_extension_recognition_match(path)
+}
+
+fn has_extension_recognition_match(path: &str) -> bool {
+    let candidate = path.strip_suffix('~').unwrap_or(path);
+    for (start, _) in candidate.char_indices() {
+        let tail = &candidate[start..];
+        let parts: Vec<&str> = tail.split('.').collect();
+        if !(2..=4).contains(&parts.len()) {
+            continue;
+        }
+        if parts[0].is_empty() || !parts[0].chars().all(is_word_character) {
+            continue;
+        }
+        if parts[1..].iter().all(|part| {
+            (2..=5).contains(&part.len()) && part.chars().all(|ch| ch.is_ascii_alphanumeric())
+        }) {
+            return true;
+        }
+    }
+
+    false
+}
+
+fn is_word_character(character: char) -> bool {
+    character.is_ascii_alphanumeric() || character == '_'
+}
+
+fn add_entry(
+    wordlist: &mut IndexSet<String>,
+    path: String,
+    max_size: Option<usize>,
+) -> PyResult<()> {
     wordlist.insert(path);
     if let Some(limit) = max_size {
         if wordlist.len() > limit {
@@ -226,7 +394,9 @@ fn apply_case(path: String, lowercase: bool, uppercase: bool, capitalization: bo
     } else if capitalization {
         let mut chars = path.chars();
         match chars.next() {
-            Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+            Some(first) => {
+                first.to_uppercase().collect::<String>() + &chars.as_str().to_lowercase()
+            }
             None => path,
         }
     } else {
