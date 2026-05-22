@@ -18,11 +18,10 @@
 
 import re
 import json
-from typing_extensions import LiteralString
-
-from defusedxml import ElementTree
+from xml.etree import ElementTree
 
 from lib.core.settings import QUERY_STRING_REGEX
+from lib.utils import safe_xml
 
 
 class MimeTypeUtils:
@@ -37,12 +36,10 @@ class MimeTypeUtils:
     @staticmethod
     def is_xml(content):
         try:
-            ElementTree.fromstring(content)
+            safe_xml.fromstring(content)
             return True
-        except ElementTree.ParseError:
+        except (ElementTree.ParseError, safe_xml.UnsafeXML):
             return False
-        except Exception:
-            return True
 
     @staticmethod
     def is_query_string(content):
@@ -52,7 +49,7 @@ class MimeTypeUtils:
         return False
 
 
-def guess_mimetype(content) -> LiteralString:
+def guess_mimetype(content) -> str:
     if MimeTypeUtils.is_json(content):
         return "application/json"
     elif MimeTypeUtils.is_xml(content):

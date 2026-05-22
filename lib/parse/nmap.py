@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import defusedxml.ElementTree as ET
+from lib.utils import safe_xml
 
 
 def parse_nmap(file: str) -> list[str]:
-    root = ET.parse(file).getroot()
+    root = safe_xml.parse_file(file).getroot()
     targets = []
     for host in root.iter("host"):
         hostname = (

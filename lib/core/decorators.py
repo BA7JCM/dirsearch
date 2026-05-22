@@ -22,22 +22,19 @@ import threading
 
 from functools import wraps
 from time import time
-from typing import Any, Callable, TypeVar
-from typing_extensions import ParamSpec
+from typing import Any, Callable, TypeVar, cast
 
 _lock = threading.Lock()
 _cache: dict[int, tuple[float, Any]] = {}
 _cache_lock = threading.Lock()
 
-# https://mypy.readthedocs.io/en/stable/generics.html#declaring-decorators
-P = ParamSpec("P")
-T = TypeVar("T")
+F = TypeVar("F", bound=Callable[..., Any])
 
 
-def cached(timeout: int | float = 100) -> Callable[..., Any]:
-    def _cached(func: Callable[P, T]) -> Callable[P, T]:
+def cached(timeout: int | float = 100) -> Callable[[F], F]:
+    def _cached(func: F) -> F:
         @wraps(func)
-        def with_caching(*args: P.args, **kwargs: P.kwargs) -> T:
+        def with_caching(*args: Any, **kwargs: Any) -> Any:
             key = id(func)
             for arg in args:
                 key += id(arg)
@@ -54,14 +51,14 @@ def cached(timeout: int | float = 100) -> Callable[..., Any]:
 
             return result
 
-        return with_caching
+        return cast(F, with_caching)
 
     return _cached
 
 
-def locked(func: Callable[P, T]) -> Callable[P, T]:
-    def with_locking(*args: P.args, **kwargs: P.kwargs) -> T:
+def locked(func: F) -> F:
+    def with_locking(*args: Any, **kwargs: Any) -> Any:
         with _lock:
             return func(*args, **kwargs)
 
-    return with_locking
+    return cast(F, with_locking)
