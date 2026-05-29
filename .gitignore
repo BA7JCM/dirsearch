@@ -10,6 +10,8 @@ venv/
 .cache/
 build/
 dist/
+portable/
+pyinstaller/dist/
 /dirsearch.spec
 sessions/*
 !sessions/.gitkeep

@@ -35,20 +35,20 @@ pip3 install dirsearch
 dirsearch -u https://example.com -e php,html,js
 ```
 
-Pre-built standalone binaries are available on the [Releases page](https://github.com/maurosoria/dirsearch/releases).
+Pre-built PyInstaller binaries and portable folder archives are available on the [Releases page](https://github.com/maurosoria/dirsearch/releases).
 
 ## Documentation
 
 The full documentation now lives in [`docs/`](docs/index.md):
 
-- [Installation](docs/installation.md): supported platforms, Python install, standalone binaries, and Docker.
+- [Installation](docs/installation.md): supported platforms, Python install, release artifacts, and Docker.
 - [Usage Guide](docs/usage.md): common scans, recursion, filters, proxies, raw requests, reports, and tips.
 - [Wordlists](docs/wordlists.md): `%EXT%`, categories, templates, prefixes, suffixes, and transformations.
 - [CLI Options](docs/options.md): complete command-line reference.
 - [Configuration](docs/configuration.md): `config.ini` reference.
 - [Sessions](docs/sessions.md): save, list, and resume scan sessions.
 - [Python API](docs/python-api.md): importable API examples.
-- [Building](docs/building.md): PyInstaller, standalone builds, and GitHub Actions.
+- [Building](docs/building.md): PyInstaller, portable builds, Docker images, and GitHub Actions.
 - [References](docs/references.md): external tutorials and articles.
 
 ## Minimal Examples

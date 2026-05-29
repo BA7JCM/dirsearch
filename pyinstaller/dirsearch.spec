@@ -6,6 +6,8 @@ Generates standalone executables for multiple platforms
 
 import os
 import sys
+import importlib.util
+import configparser
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 block_cipher = None
@@ -52,6 +54,16 @@ hidden_imports += [
     'httpcore',
     'socksio',
 ]
+
+config = configparser.ConfigParser()
+config.read(os.path.join(PROJECT_ROOT, 'config.ini'))
+native_stack_enabled = (
+    config.get('request', 'request-backend', fallback='python') == 'native'
+    or config.get('dictionary', 'wordlist-backend', fallback='auto') == 'native'
+)
+
+if native_stack_enabled and importlib.util.find_spec('dirsearch_native') is not None:
+    hidden_imports.append('dirsearch_native')
 
 # Data files to include
 datas = [

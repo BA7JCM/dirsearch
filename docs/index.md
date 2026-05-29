@@ -4,7 +4,7 @@ dirsearch is an advanced web path brute-forcer. This documentation is split into
 
 ## User Documentation
 
-- [Installation](installation.md): supported platforms, Python installation, standalone binaries, and Docker usage.
+- [Installation](installation.md): supported platforms, Python installation, release artifacts, and Docker usage.
 - [Usage Guide](usage.md): common command examples, recursion, filtering, proxies, raw requests, reports, and practical tips.
 - [Wordlists](wordlists.md): extension handling, bundled categories, templates, prefixes, suffixes, and wordlist transformations.
 - [CLI Options](options.md): complete command-line option reference.
@@ -14,5 +14,5 @@ dirsearch is an advanced web path brute-forcer. This documentation is split into
 
 ## Maintainer Documentation
 
-- [Building](building.md): PyInstaller builds, standalone binaries, and GitHub Actions workflows.
+- [Building](building.md): PyInstaller builds, portable archives, Docker images, and GitHub Actions workflows.
 - [References](references.md): external articles, tutorials, and videos.
