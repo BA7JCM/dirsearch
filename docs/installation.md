@@ -2,16 +2,15 @@
 
 ## Supported Platforms
 
-dirsearch runs on multiple platforms and can be used either via Python or standalone binaries.
+dirsearch runs on Python 3.11-3.14 and is distributed as source, PyPI package, Docker image, PyInstaller binary, or portable folder.
 
-| Platform | Python | Standalone Binary |
-|----------|--------|-------------------|
-| Linux (x86_64) | Python 3.11-3.14 | `dirsearch-linux-amd64` |
-| Windows (x64) | Python 3.11-3.14 | `dirsearch-windows-x64.exe` |
-| macOS (Intel) | Python 3.11-3.14 | `dirsearch-macos-intel` |
-| macOS (Apple Silicon) | Python 3.11-3.14 | `dirsearch-macos-silicon` |
-
-Standalone binaries are self-contained executables that do not require a Python installation.
+| Platform | Architecture | PyInstaller | Portable folder |
+|----------|--------------|-------------|-----------------|
+| Windows | x64 | Yes | Yes |
+| Linux | x64 | Yes | Yes |
+| Linux | ARM64 | Yes | Yes |
+| macOS | Intel x86_64 | Yes | Yes |
+| macOS | Apple Silicon ARM64 | Yes | Yes |
 
 ## Install from Source
 
@@ -27,53 +26,80 @@ python3 dirsearch.py -u https://example.com -w tests/static/wordlist.txt -q
 
 - ZIP archive: [Download the master branch](https://github.com/maurosoria/dirsearch/archive/master.zip).
 - PyPI: `pip3 install dirsearch` or `pip install dirsearch`.
-- Docker: `docker build -t "dirsearch:v5.0.0" .`.
+- Docker: `docker pull ghcr.io/maurosoria/dirsearch:v0.5.0-rc1-async`.
 - Kali Linux: `sudo apt-get install dirsearch` (deprecated).
 
-## Standalone Binaries
+## Release Artifacts
 
-Pre-built standalone binaries are available for all major platforms. Download them from [Releases](https://github.com/maurosoria/dirsearch/releases).
+Pre-built release assets are available on the [Releases page](https://github.com/maurosoria/dirsearch/releases).
 
-| Platform | Binary Name | Architecture |
-|----------|-------------|--------------|
-| Linux | `dirsearch-linux-amd64` | x86_64 |
-| Windows | `dirsearch-windows-x64.exe` | x64 |
-| macOS Intel | `dirsearch-macos-intel` | x86_64 |
-| macOS Apple Silicon | `dirsearch-macos-silicon` | ARM64 |
+Each platform has three stack variants:
 
-Linux and macOS usage:
+| Variant | Default behavior |
+|---------|------------------|
+| `async` | Recommended Python async runtime |
+| `threaded` | Legacy threaded Python runtime |
+| `native-rust` | Rust request and wordlist backends |
 
-```sh
-chmod +x dirsearch-linux-amd64
-./dirsearch-linux-amd64 -u https://target
+PyInstaller examples:
+
+```text
+dirsearch-v0.5.0-rc1-linux-x64-async
+dirsearch-v0.5.0-rc1-linux-arm64-native-rust
+dirsearch-v0.5.0-rc1-windows-x64-threaded.exe
+dirsearch-v0.5.0-rc1-macos-intel-async
+dirsearch-v0.5.0-rc1-macos-silicon-native-rust
 ```
 
-Windows usage:
+Portable examples:
 
-```sh
-dirsearch-windows-x64.exe -u https://target
+```text
+dirsearch-v0.5.0-rc1-linux-x64-async-portable.tar.gz
+dirsearch-v0.5.0-rc1-windows-x64-native-rust-portable.zip
 ```
 
-Standalone binaries include bundled `db/` wordlists and `config.ini`. Session files are stored in `$HOME/.dirsearch/sessions/` when using bundled builds.
+PyInstaller binaries are single files. Portable archives are larger, but bundle CPython and compiled dependencies and are less likely to trigger antivirus false positives caused by PyInstaller bootloader heuristics.
+
+Linux and macOS PyInstaller usage:
+
+```sh
+chmod +x dirsearch-v0.5.0-rc1-linux-x64-async
+./dirsearch-v0.5.0-rc1-linux-x64-async -u https://target
+```
+
+Windows PyInstaller usage:
+
+```sh
+dirsearch-v0.5.0-rc1-windows-x64-async.exe -u https://target
+```
+
+Portable usage:
+
+```sh
+tar -xzf dirsearch-v0.5.0-rc1-linux-x64-async-portable.tar.gz
+./dirsearch-v0.5.0-rc1-linux-x64-async-portable/dirsearch -u https://target
+```
+
+On Windows, extract the `.zip` and run `dirsearch.cmd`.
 
 ## Docker
 
-Install Docker on Linux:
+Docker images are published for Linux x64 in GitHub Container Registry:
 
 ```sh
-curl -fsSL https://get.docker.com | bash
+docker pull ghcr.io/maurosoria/dirsearch:v0.5.0-rc1-async
+docker run -it --rm ghcr.io/maurosoria/dirsearch:v0.5.0-rc1-async -u target -e php,html,js,zip
 ```
 
-Docker may require superuser permissions.
+Available tags for the prerelease:
 
-Build the image:
+- `ghcr.io/maurosoria/dirsearch:v0.5.0-rc1-async`
+- `ghcr.io/maurosoria/dirsearch:v0.5.0-rc1-threaded`
+- `ghcr.io/maurosoria/dirsearch:v0.5.0-rc1-native-rust`
 
-```sh
-docker build -t "dirsearch:v5.0.0" .
-```
-
-Run dirsearch from the image:
+Build locally:
 
 ```sh
-docker run -it --rm "dirsearch:v5.0.0" -u target -e php,html,js,zip
+docker build --build-arg DIRSEARCH_STACK=async -t dirsearch:v0.5.0-rc1-async .
+docker build --build-arg DIRSEARCH_STACK=native-rust -t dirsearch:v0.5.0-rc1-native-rust .
 ```

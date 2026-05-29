@@ -1,7 +1,7 @@
 # dirsearch native PoC
 
-This crate is an experimental Phase 5 native backend. It is opt-in and is not
-part of the default Python package build yet.
+This crate is an experimental Phase 5 native backend. It is opt-in for source
+installs and is included in `native-rust` release artifacts.
 
 It exposes two PyO3 functions:
 
@@ -18,7 +18,8 @@ Build locally with a Rust toolchain and maturin:
 
 ```sh
 python3 -m pip install maturin
-python3 -m maturin develop --manifest-path native/Cargo.toml
+python3 -m maturin build --release --manifest-path native/Cargo.toml --out dist/native-wheels
+python3 -m pip install dist/native-wheels/*.whl
 ```
 
 The benchmark summary for this backend is in

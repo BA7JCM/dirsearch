@@ -1,28 +1,41 @@
-# GitHub Action for building dirsearch with PyInstaller (Windows)
-
 name: PyInstaller Windows
 
 on:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Release tag used in artifact names
+        required: false
+        default: v0.5.0-rc1
   workflow_call:
+    inputs:
+      release_tag:
+        required: false
+        type: string
+        default: v0.5.0-rc1
 
 env:
   PYTHON_VERSION: '3.14'
   PYINSTALLER_VERSION: '6.20.0'
+  RELEASE_TAG: ${{ inputs.release_tag || 'v0.5.0-rc1' }}
+
+defaults:
+  run:
+    shell: bash
 
 jobs:
   build-windows:
-    name: Build Windows x64 (${{ matrix.variant.name }})
+    name: Build Windows x64 (${{ matrix.stack.name }})
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        variant:
+        stack:
           - name: threaded
-            async: "False"
           - name: async
-            async: "True"
+          - name: native-rust
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -31,33 +44,43 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-          cache: 'pip'
+          cache: pip
 
-      - name: Install dependencies
+      - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip setuptools wheel
-          pip install -r requirements.txt -r requirements/db.txt
-          pip install pyinstaller==${{ env.PYINSTALLER_VERSION }}
+          python -m pip install --only-binary=:all: -r requirements.txt -r requirements/db.txt
+          python -m pip install pyinstaller==${{ env.PYINSTALLER_VERSION }}
 
-      - name: Set default async mode
+      - name: Configure default stack
+        run: python scripts/configure_stack.py config.ini ${{ matrix.stack.name }}
+
+      - name: Build native Rust extension
+        if: matrix.stack.name == 'native-rust'
         run: |
-          (Get-Content config.ini) -replace '^async = .*', 'async = ${{ matrix.variant.async }}' | Set-Content config.ini
+          rustup default stable
+          python -m pip install --only-binary=:all: maturin
+          mkdir -p dist/native-wheels
+          python -m maturin build --release --manifest-path native/Cargo.toml --out dist/native-wheels
+          python -m pip install dist/native-wheels/*.whl
+          python -c "import dirsearch_native"
 
       - name: Build Windows binary
-        run: |
-          pyinstaller --clean pyinstaller/dirsearch.spec
+        run: python -m PyInstaller --clean pyinstaller/dirsearch.spec
 
       - name: Rename binary
-        run: mv dist/dirsearch.exe dist/dirsearch-windows-x64-${{ matrix.variant.name }}.exe
+        run: |
+          mv dist/dirsearch.exe "dist/dirsearch-${RELEASE_TAG}-windows-x64-${{ matrix.stack.name }}.exe"
 
       - name: Test Windows binary
         run: |
-          ./dist/dirsearch-windows-x64-${{ matrix.variant.name }}.exe --version
-          ./dist/dirsearch-windows-x64-${{ matrix.variant.name }}.exe --help
+          "./dist/dirsearch-${RELEASE_TAG}-windows-x64-${{ matrix.stack.name }}.exe" --version
+          "./dist/dirsearch-${RELEASE_TAG}-windows-x64-${{ matrix.stack.name }}.exe" --help
+          "./dist/dirsearch-${RELEASE_TAG}-windows-x64-${{ matrix.stack.name }}.exe" -u https://example.com -w tests/static/wordlist.txt -e html -q
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
         with:
-          name: dirsearch-windows-x64-${{ matrix.variant.name }}
-          path: dist/dirsearch-windows-x64-${{ matrix.variant.name }}.exe
+          name: dirsearch-${{ env.RELEASE_TAG }}-windows-x64-${{ matrix.stack.name }}
+          path: dist/dirsearch-${{ env.RELEASE_TAG }}-windows-x64-${{ matrix.stack.name }}.exe
           retention-days: 30

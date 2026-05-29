@@ -1,79 +1,69 @@
 # PyInstaller Build Configuration
 
-This directory contains the configuration for building standalone dirsearch executables using PyInstaller.
+This directory contains the PyInstaller spec and local build script for standalone dirsearch executables.
 
-## Supported Platforms
+## Release Targets
 
-| Platform | Architecture | Runner |
-|----------|--------------|--------|
-| Linux | AMD64 | ubuntu-latest |
-| Windows | x64 | windows-latest |
-| macOS | Intel (x86_64) | macos-13 |
-| macOS | Silicon (ARM64) | macos-14 |
+| Platform | Architecture | Artifact suffix |
+|----------|--------------|-----------------|
+| Windows | x64 | `windows-x64` |
+| Linux | x64 | `linux-x64` |
+| Linux | ARM64 | `linux-arm64` |
+| macOS | Intel x86_64 | `macos-intel` |
+| macOS | Apple Silicon ARM64 | `macos-silicon` |
 
-## Quick Start
+Each target is built as:
 
-### Build for Current Platform
+- `async`
+- `threaded`
+- `native-rust`
 
-```bash
-# Install dependencies
-pip install -r requirements.txt -r requirements/db.txt pyinstaller==6.20.0
-
-# Run PyInstaller
-pyinstaller pyinstaller/dirsearch.spec
-```
-
-### Using Build Script
+## Local Build
 
 ```bash
-chmod +x pyinstaller/build.sh
-./pyinstaller/build.sh
+./pyinstaller/build.sh async
+./pyinstaller/build.sh threaded
+./pyinstaller/build.sh native-rust
+./pyinstaller/build.sh all
 ```
 
-## GitHub Actions
-
-The workflow automatically builds for all platforms when:
-- A version tag is pushed (e.g., `v5.0.0RC1`)
-- Manually triggered via workflow_dispatch
-
-### Triggering a Release
-
-```bash
-git tag v5.0.0RC1
-git push origin v5.0.0RC1
-```
-
-This creates a GitHub Release with binaries for all platforms.
-
-## Files
-
-| File | Description |
-|------|-------------|
-| `dirsearch.spec` | PyInstaller specification file |
-| `build.sh` | Build script for local builds |
+The script installs runtime and optional DB dependencies from wheels. The `native-rust` stack also builds the PyO3 extension with maturin.
 
 ## Output
 
-Binaries are created in `dist/`:
+Binaries are created in `pyinstaller/dist/`:
 
+```text
+dirsearch-v0.5.0-rc1-linux-x64-async
+dirsearch-v0.5.0-rc1-linux-arm64-native-rust
+dirsearch-v0.5.0-rc1-windows-x64-threaded.exe
+dirsearch-v0.5.0-rc1-macos-intel-async
+dirsearch-v0.5.0-rc1-macos-silicon-native-rust
 ```
-dist/
-├── dirsearch-linux-amd64
-├── dirsearch-windows-x64.exe
-├── dirsearch-macos-intel
-└── dirsearch-macos-silicon
-```
+
+Some antivirus engines flag PyInstaller bootloaders heuristically. For users affected by that, publish and recommend the portable folder archives built by `.github/workflows/portable-builds.yml`.
 
 ## Troubleshooting
 
-### Missing modules
-Add hidden imports to the PyInstaller command or `.spec` file:
-```
---hidden-import=module_name
+### Missing Modules
+
+Add hidden imports to `pyinstaller/dirsearch.spec`.
+
+### Native Rust Variant
+
+Install Rust and maturin before building:
+
+```bash
+rustup default stable
+python3 -m pip install --only-binary=:all: maturin
+python3 -m maturin build --release --manifest-path native/Cargo.toml --out dist/native-wheels
+python3 -m pip install dist/native-wheels/*.whl
 ```
 
-### macOS code signing
+### macOS Code Signing
+
 For distribution, sign binaries with:
+
 ```bash
-codesign --sign "Developer ID" dirsearch-macos-*
+codesign --sign "Developer ID" pyinstaller/dist/dirsearch-v0.5.0-rc1-macos-*
 ```

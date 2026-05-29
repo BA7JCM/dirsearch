@@ -2,25 +2,55 @@
 
 ## [Unreleased]
 
-## [5.0.0] - April 29, 2026
-- Prepared the release base for Python 3.14.
-- Made MySQL and PostgreSQL report drivers optional extras.
-- Added `dirsearch[mysql]`, `dirsearch[postgresql]`, and `dirsearch[db]` install extras.
-- Updated Docker, CI, PyInstaller, and Nuitka release builds for the 5.0.0 baseline.
-- Added an importable Python API with `FuzzerConfig`, `DirsearchFuzzer`, structured results, wordlists, and template wordlists.
-- Added template wordlist placeholders, curated templates, `--wordlist-status`, and generation limits.
-- Added the initial wordlist backend interface with `auto`, `python`, and reserved `native` selection.
-- Ability to use multiple output formats
-- MySQL and PostgreSQL report formats
-- Support variables in file path and SQL table name for saving results
-- Support non-default network interface
-- Load targets from a Nmap XML report
-- Added option to enable asynchronous mode (use coroutines instead of threads)
-- Added option to disable CLI output entirely
-- Option to detect and filter identical results
-- Maximum runtime per target
-- Wordlists by categories
-- Saving and resuming sessions by ID
+## [0.5.0] - May 29, 2026
+This release includes all user-facing changes since the last published release,
+`v0.4.3`.
+
+### Runtime and scanning
+- Raised the minimum supported Python version to 3.11 and prepared release builds on Python 3.14.
+- Added the async runtime and made it the default on supported Python versions, with `--sync` available for the legacy threaded stack.
+- Added the Rust native backend for supported GET scans and native wordlist generation, selectable with `--request-backend native` and `--wordlist-backend native`.
+- Added advanced match/filter controls inspired by ffuf/wfuzz, including status, size, word, line, regex, and elapsed-time filters.
+- Improved wildcard and duplicate-result filtering, including redirect-aware duplicate detection and stealth calibration words.
+- Added maximum runtime per target, non-default network interface support, Nmap XML target import, and `--disable-cli`.
+- Improved async pause/stop behavior, SSL error classification, proxy handling, streamed response timing, IPv6 handling, and encoded URL edge cases.
+
+### Wordlists and discovery data
+- Added category-based wordlists with `--wordlist-categories`, including technology-specific categories for PHP, Python, Java, .NET, Node, ColdFusion, and infrastructure.
+- Added template wordlists with placeholders such as `%SUBJECT%`, `%CRUD_OP%`, `%AUTH_OP%`, `%DATE%`, `%API_VERSION%`, `%CATEGORY:name%`, and `%EXT%`.
+- Added `--wordlist-status`, `--wordlist-max-size`, and the `auto`, `python`, and `native` wordlist backend selector.
+- Added and refreshed bundled discovery paths, blacklists, WordPress-related paths, WooCommerce logs, API/Ollama/OpenAI endpoints, and traversal-oriented entries.
+
+### Output, reports, and API
+- Added multiple output formats in one run and file/table variables for report paths and SQL table names.
+- Added MySQL and PostgreSQL reports, with DB drivers moved to optional extras: `dirsearch[mysql]`, `dirsearch[postgresql]`, and `dirsearch[db]`.
+- Added `--verbose` output with response elapsed time and content type.
+- Added an importable Python API with `FuzzerConfig`, `DirsearchFuzzer`, structured results, wordlist helpers, and template wordlist support.
+- Added `python -m dirsearch` entrypoint support and fixed packaged install metadata.
+
+### Sessions and resumability
+- Reworked resumable sessions around JSON controller state instead of pickle.
+- Added `--list-sessions`, session resume by ID, safer session paths, and Windows-safe timestamp handling.
+- Moved bundled-build session storage to the user home directory and improved Ctrl+C pause/resume behavior across threaded, async, and PyInstaller Linux builds.
+
+### Security and dependencies
+- Pinned runtime requirements for supply-chain hardening.
+- Removed the old dependency installer path and made optional DB dependencies explicit.
+- Replaced unsafe XML parsing behavior with safe XML handling and tests.
+- Stopped loading pickle sessions directly and warn on unsupported legacy pickle sessions.
+
+### Packaging, CI, and distribution
+- Added PyInstaller release builds for Windows x64, Linux x64, Linux ARM64, macOS Intel, and macOS Apple Silicon.
+- Added three release stacks for binaries and portable archives: `async`, `threaded`, and `native-rust`.
+- Added portable CPython archives with compiled dependencies for users who hit PyInstaller antivirus false positives.
+- Added Linux x64 Docker images published to GitHub Container Registry for each release stack.
+- Removed Nuitka from the release build matrix for this prerelease.
+- Refreshed CI, CodeQL, Semgrep, Docker, PyInstaller, and release-draft workflows.
+
+### Documentation
+- Split the README into focused documentation pages under `docs/`.
+- Added installation, usage, configuration, sessions, wordlist, Python API, build, and native-backend benchmark docs.
+- Added prompt-injection safety guidance for agent workflows.
 
 ## [0.4.3] - October 2nd, 2022
 - Automatically detect the URI scheme (`http` or `https`) if no scheme is provided
@@ -153,7 +183,7 @@
 - Initial public release
 
 [Unreleased]: https://github.com/maurosoria/dirsearch/tree/master
-[5.0.0]: https://github.com/maurosoria/dirsearch/tree/v5.0.0
+[0.5.0]: https://github.com/maurosoria/dirsearch/tree/v0.5.0
 [0.4.3]: https://github.com/maurosoria/dirsearch/tree/v0.4.3
 [0.4.2]: https://github.com/maurosoria/dirsearch/tree/v0.4.2
 [0.4.1]: https://github.com/maurosoria/dirsearch/tree/v0.4.1

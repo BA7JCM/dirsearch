@@ -1,117 +1,103 @@
 # Building
 
-## Building from Source
+dirsearch release builds produce two downloadable formats:
 
-You can build standalone executables using PyInstaller. This creates a single binary file that includes all dependencies.
+- PyInstaller single-file binaries for quick use.
+- Portable folders that bundle CPython, Python dependencies, optional DB drivers, and the Rust native module when selected.
+
+PyInstaller binaries are convenient, but some antivirus engines flag PyInstaller bootloaders heuristically. Use the portable folder archives when a single-file executable is blocked.
+
+## Supported Release Targets
+
+| Platform | Architecture | PyInstaller | Portable folder | Docker |
+|----------|--------------|-------------|-----------------|--------|
+| Windows | x64 | Yes | Yes | No |
+| Linux | x64 | Yes | Yes | GHCR image |
+| Linux | ARM64 | Yes | Yes | No |
+| macOS | Intel x86_64 | Yes | Yes | No |
+| macOS | Apple Silicon ARM64 | Yes | Yes | No |
+
+Each non-Docker target is built in three default-stack variants:
+
+| Variant | Defaults | Purpose |
+|---------|----------|---------|
+| `async` | `async = True`, `request-backend = python` | Recommended default runtime |
+| `threaded` | `async = False`, `request-backend = python` | Legacy threaded Python runtime |
+| `native-rust` | `async = False`, `request-backend = native`, `wordlist-backend = native` | Rust request and wordlist backend |
+
+## Local PyInstaller Build
 
 Requirements:
 
-- Python 3.11-3.14
-- PyInstaller 6.20.0+
-- Dependencies from `requirements.txt` and `requirements/db.txt`
+- Python 3.14 for release-equivalent builds.
+- PyInstaller 6.20.0.
+- Rust and maturin when building `native-rust`.
 
-## Quick Build
-
-```sh
-pip install -r requirements.txt -r requirements/db.txt
-pip install pyinstaller==6.20.0
-pyinstaller pyinstaller/dirsearch.spec
-./dist/dirsearch --version
-```
-
-## Manual Build on Linux or macOS
+Build the current platform:
 
 ```sh
-pyinstaller \
-  --onefile \
-  --name dirsearch \
-  --paths=. \
-  --collect-submodules=lib \
-  --add-data "db:db" \
-  --add-data "config.ini:." \
-  --add-data "lib/report:lib/report" \
-  --hidden-import=requests \
-  --hidden-import=httpx \
-  --hidden-import=urllib3 \
-  --hidden-import=jinja2 \
-  --hidden-import=colorama \
-  --strip \
-  --clean \
-  dirsearch.py
+pyinstaller/build.sh async
+pyinstaller/build.sh threaded
+pyinstaller/build.sh native-rust
 ```
 
-## Manual Build on Windows
+Build all three variants for the current platform:
 
-```powershell
-pyinstaller `
-  --onefile `
-  --name dirsearch `
-  --paths=. `
-  --collect-submodules=lib `
-  --add-data "db;db" `
-  --add-data "config.ini;." `
-  --add-data "lib/report;lib/report" `
-  --hidden-import=requests `
-  --hidden-import=httpx `
-  --hidden-import=urllib3 `
-  --hidden-import=jinja2 `
-  --hidden-import=colorama `
-  --clean `
-  dirsearch.py
+```sh
+pyinstaller/build.sh all
 ```
 
-Windows uses `;` instead of `:` as the path separator in `--add-data`.
+Artifacts are written to `pyinstaller/dist/` with names such as:
 
-## Build Output
+```text
+dirsearch-v0.5.0-rc1-linux-x64-async
+dirsearch-v0.5.0-rc1-windows-x64-native-rust.exe
+```
 
-- Linux/macOS: `dist/dirsearch`
-- Windows: `dist/dirsearch.exe`
+## Local Portable Build
 
-The binary includes:
+Portable builds use CPython from `python-build-standalone` and install wheels into the bundled interpreter.
 
-- All Python dependencies
-- `db/` directory with wordlists and blacklists
-- `config.ini` default configuration
-- `lib/report/` Jinja2 templates for reports
+```sh
+python3 scripts/build_portable.py --target linux-x64 --stack async
+python3 scripts/build_portable.py --target linux-x64 --stack native-rust
+```
+
+Valid targets are:
+
+- `windows-x64`
+- `linux-x64`
+- `linux-arm64`
+- `macos-intel`
+- `macos-silicon`
+
+Portable artifacts are written to `portable/dist/` as `.zip` on Windows and `.tar.gz` on Linux/macOS.
 
 ## GitHub Workflows
 
-dirsearch uses GitHub Actions for continuous integration and automated builds.
-
 | Workflow | Trigger | Description |
 |----------|---------|-------------|
-| Inspection (CI) | Push, PR | Runs tests, linting, and codespell on Python 3.11/3.14 across Ubuntu and Windows |
-| PyInstaller Linux | Manual, Workflow call | Builds `dirsearch-linux-amd64` binary |
-| PyInstaller Windows | Manual, Workflow call | Builds `dirsearch-windows-x64.exe` binary |
-| PyInstaller macOS Intel | Manual, Workflow call | Builds `dirsearch-macos-intel` binary |
-| PyInstaller macOS Silicon | Manual, Workflow call | Builds `dirsearch-macos-silicon` binary |
-| PyInstaller Draft Release | Manual | Builds all platforms and creates a draft GitHub release |
-| Docker Image | Push, PR | Builds and tests Docker image |
-| CodeQL Analysis | Push, PR, Schedule | Security scanning with GitHub CodeQL |
-| Semgrep Analysis | Push, PR | Static analysis with Semgrep |
+| Inspection (CI) | Push, PR | Tests, linting, and codespell |
+| PyInstaller Linux | Manual, workflow call | Builds Linux x64 and ARM64 PyInstaller artifacts |
+| PyInstaller Windows | Manual, workflow call | Builds Windows x64 PyInstaller artifacts |
+| PyInstaller macOS Intel | Manual, workflow call | Builds macOS Intel PyInstaller artifacts |
+| PyInstaller macOS Silicon | Manual, workflow call | Builds macOS Apple Silicon PyInstaller artifacts |
+| Portable Builds | Manual, workflow call | Builds portable folder archives for all OS/arch targets |
+| Docker Images | Push, PR, manual, workflow call | Builds Linux x64 Docker images and can push GHCR tags |
+| v0.5.0 Prerelease | Manual | Builds all release assets and creates a draft GitHub prerelease |
 
-## Running Workflows Manually
+## Creating the v0.5.0 Prerelease
 
-PyInstaller builds can be triggered manually from the GitHub Actions tab:
-
-1. Go to Actions and select a workflow, such as PyInstaller Linux.
+1. Go to Actions > v0.5.0 Prerelease.
 2. Click Run workflow.
-3. Download artifacts from the completed run.
+3. Use tag `v0.5.0-rc1`.
+4. Keep prerelease enabled.
+5. Review the draft release, checksums, and GHCR image tags before publishing.
 
-## Creating a Release
+The release workflow publishes Docker images to GitHub Container Registry for Linux x64 only:
 
-To create a release with all platform binaries:
-
-1. Go to Actions > PyInstaller Draft Release.
-2. Click Run workflow.
-3. Enter the tag, such as `v5.0.0`.
-4. Select the target branch.
-5. Optionally mark it as a prerelease.
-6. Review and publish the draft release.
-
-## Build Matrix
-
-The CI workflow tests on:
-
-- Python versions: 3.11, 3.14
-- Operating systems: Ubuntu latest and Windows latest
+```text
+ghcr.io/<owner>/dirsearch:v0.5.0-rc1-async
+ghcr.io/<owner>/dirsearch:v0.5.0-rc1-threaded
+ghcr.io/<owner>/dirsearch:v0.5.0-rc1-native-rust
+```
