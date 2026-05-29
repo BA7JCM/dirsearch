@@ -8,6 +8,7 @@ from .lib.core.api import (
     FuzzerConfig,
     FuzzerResult,
     Wordlist,
+    WordlistLimitError,
     WordlistState,
     WordlistTemplate,
 )
@@ -17,6 +18,7 @@ __all__ = [
     "FuzzerConfig",
     "FuzzerResult",
     "Wordlist",
+    "WordlistLimitError",
     "WordlistState",
     "WordlistTemplate",
 ]

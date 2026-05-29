@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+import os
 import time
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
@@ -26,10 +27,12 @@ from urllib.parse import urljoin
 
 import requests
 
-from lib.core.settings import DEFAULT_HEADERS
+from lib.core.exceptions import WordlistLimitError
+from lib.core.settings import DEFAULT_HEADERS, SCRIPT_PATH
 from lib.core.structures import OrderedSet
 from lib.core.wordlist_template import expand_template_line, normalize_placeholders
 from lib.utils.common import safequote
+from lib.utils.file import FileUtils
 
 
 __all__ = [
@@ -37,6 +40,7 @@ __all__ = [
     "FuzzerConfig",
     "FuzzerResult",
     "Wordlist",
+    "WordlistLimitError",
     "WordlistState",
     "WordlistTemplate",
 ]
@@ -65,13 +69,16 @@ class WordlistState:
 class Wordlist:
     items: tuple[str, ...]
 
-    def __init__(self, items: Iterable[str]) -> None:
-        object.__setattr__(self, "items", tuple(self._dedupe(items)))
+    def __init__(self, items: Iterable[str], *, max_entries: int | None = None) -> None:
+        object.__setattr__(
+            self,
+            "items",
+            tuple(self._dedupe(items, max_entries=max_entries)),
+        )
 
     @classmethod
     def from_file(cls, path: str) -> Wordlist:
-        with open(path, "r", encoding="utf-8", errors="ignore") as handle:
-            return cls(line.strip() for line in handle)
+        return cls(FileUtils.get_lines(path))
 
     @classmethod
     def from_template(
@@ -80,17 +87,29 @@ class Wordlist:
         *,
         extensions: Iterable[str] = (),
         placeholders: Mapping[str, Iterable[str] | str] | None = None,
+        max_entries: int | None = None,
     ) -> Wordlist:
-        return cls(template.render(extensions=extensions, placeholders=placeholders))
+        return cls(
+            template.render(extensions=extensions, placeholders=placeholders),
+            max_entries=max_entries,
+        )
 
     @staticmethod
-    def _dedupe(items: Iterable[str]) -> Iterator[str]:
+    def _dedupe(
+        items: Iterable[str],
+        *,
+        max_entries: int | None = None,
+    ) -> Iterator[str]:
         seen = OrderedSet()
         for item in items:
             path = item.strip().lstrip("/")
             if not path or path.startswith("#") or path in seen:
                 continue
             seen.add(path)
+            if max_entries is not None and len(seen) > max_entries:
+                raise WordlistLimitError(
+                    f"Generated wordlist exceeded max_entries ({max_entries})"
+                )
             yield path
 
     def __iter__(self) -> Iterator[str]:
@@ -119,6 +138,33 @@ class WordlistTemplate:
             "placeholders",
             self._normalize_placeholders(placeholders or {}),
         )
+
+    @classmethod
+    def from_file(
+        cls,
+        path: str,
+        placeholders: Mapping[str, Iterable[str] | str] | None = None,
+    ) -> WordlistTemplate:
+        return cls(FileUtils.get_lines(path), placeholders=placeholders)
+
+    @classmethod
+    def from_builtin(
+        cls,
+        name: str,
+        placeholders: Mapping[str, Iterable[str] | str] | None = None,
+    ) -> WordlistTemplate:
+        filename = name.strip()
+        if not filename:
+            raise ValueError("Built-in template name is required")
+        if not filename.endswith(".txt"):
+            filename += ".txt"
+        if os.path.basename(filename) != filename:
+            raise ValueError(f"Invalid built-in template name: {name}")
+
+        path = FileUtils.build_path(SCRIPT_PATH, "db", "templates", filename)
+        if not FileUtils.can_read(path):
+            raise ValueError(f"Unknown built-in template: {name}")
+        return cls.from_file(path, placeholders=placeholders)
 
     @staticmethod
     def _normalize_placeholders(
@@ -158,6 +204,9 @@ class FuzzerConfig:
     )
     verify_tls: bool = False
     user_agent: str | None = None
+    result_predicate: Callable[[FuzzerResult], bool] | None = None
+    session_factory: Callable[[], requests.Session] | None = None
+    raise_on_error: bool = False
 
     def __post_init__(self) -> None:
         if not self.url:
@@ -190,7 +239,11 @@ class DirsearchFuzzer:
 
     def run(self) -> list[FuzzerResult]:
         results: list[FuzzerResult] = []
-        session = requests.Session()
+        session = (
+            self.config.session_factory()
+            if self.config.session_factory
+            else requests.Session()
+        )
         try:
             session.verify = self.config.verify_tls
             headers = {**DEFAULT_HEADERS, **dict(self.config.headers)}
@@ -203,6 +256,8 @@ class DirsearchFuzzer:
                 except requests.RequestException as error:
                     if self.on_error:
                         self.on_error(error)
+                    if self.config.raise_on_error:
+                        raise
                     continue
 
                 if self._is_match(result):
@@ -259,6 +314,8 @@ class DirsearchFuzzer:
             self.config.include_status_codes
             and result.status not in self.config.include_status_codes
         ):
+            return False
+        if self.config.result_predicate and not self.config.result_predicate(result):
             return False
         return True
 
