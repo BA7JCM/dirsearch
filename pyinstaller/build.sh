@@ -89,7 +89,6 @@ build() {
         --hidden-import=PySocks \
         --hidden-import=socks \
         --hidden-import=jinja2 \
-        --hidden-import=defusedxml \
         --hidden-import=OpenSSL \
         --hidden-import=ntlm_auth \
         --hidden-import=requests_ntlm \
