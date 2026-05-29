@@ -33,8 +33,17 @@ from lib.core.settings import (
 )
 from lib.parse.url import clean_path
 from lib.utils.common import replace_path
-from lib.utils.diff import DynamicContentParser, generate_matching_regex
+from lib.utils.diff import (
+    DynamicContentParser,
+    content_similarity,
+    generate_matching_regex,
+    normalize_dynamic_content,
+)
 from lib.utils.random import rand_stealth_word
+
+
+AUTO_CALIBRATION_EXTRA_SAMPLES = 2
+AMBIGUOUS_SIMILARITY_THRESHOLD = 0.9
 
 
 class BaseScanner:
@@ -51,14 +60,22 @@ class BaseScanner:
         self.requester = requester
         self.response = None
         self.wildcard_redirect_regex = None
+        self.sample_count = 0
+        self.reason = ""
 
     def check(self, path: str, response: BaseResponse) -> bool:
         """
         Perform analyzing to see if the response is wildcard or not
         """
+        decision = self.classify(path, response)
+        return decision != "wildcard"
+
+    def classify(self, path: str, response: BaseResponse) -> str:
+        """Classify response against this wildcard profile."""
 
         if self.response.status != response.status:
-            return True
+            self.reason = "status differs from wildcard profile"
+            return "unique"
 
         # See the comment in generate_redirect_regex() to understand better
         if self.wildcard_redirect_regex and response.redirect:
@@ -78,12 +95,22 @@ class BaseScanner:
                 logger.debug(
                     f'"{redirect}" doesn\'t match the regular expression "{self.wildcard_redirect_regex}", passing'
                 )
-                return True
+                self.reason = "redirect differs from wildcard profile"
+                return "unique"
 
         if self.is_wildcard(response):
-            return False
+            self.reason = "matches wildcard profile"
+            return "wildcard"
 
-        return True
+        if self.is_probable_wildcard(path, response):
+            self.reason = "matches ambiguous wildcard profile"
+            logger.debug(
+                f'"{path}" filtered by ambiguous wildcard heuristic in "{self.context}"'
+            )
+            return "wildcard"
+
+        self.reason = "response is unique enough"
+        return "unique"
 
     def get_duplicate(self, response: BaseResponse) -> BaseScanner | None:
         for category in self.tested:
@@ -101,6 +128,51 @@ class BaseScanner:
             return self.response.body == response.body
 
         return self.content_parser.compare_to(response.content)
+
+    def is_probable_wildcard(self, path: str, response: BaseResponse) -> bool:
+        """Conservative fallback for dynamic soft-404 templates.
+
+        This only runs when the normal wildcard parser could not prove a match.
+        Size/line/word counts are deliberately weak signals here; the decision
+        requires high normalized body similarity and no strong redirect/content
+        divergence.
+        """
+
+        if not self.response.content or not response.content:
+            return False
+
+        if self.response.type != response.type:
+            return False
+
+        if self.response.redirect and not response.redirect:
+            return False
+
+        if self.content_parser.static_patterns and len(self.content_parser.static_patterns) >= 20:
+            return False
+
+        similarity = content_similarity(self.response.content, response.content)
+        if similarity < AMBIGUOUS_SIMILARITY_THRESHOLD:
+            return False
+
+        base_length = max(self.response.length, 1)
+        length_delta = abs(self.response.length - response.length) / base_length
+        if length_delta > 0.35:
+            return False
+
+        normalized_content = normalize_dynamic_content(response.content)
+        normalized_path = clean_path(path).strip("/")
+        if normalized_path and normalized_path in normalized_content:
+            return True
+
+        return self.content_parser.is_ambiguous
+
+    def should_auto_calibrate(self) -> bool:
+        return bool(options.get("auto_calibration")) or self.content_parser.is_ambiguous
+
+    def add_calibration_sample(self, response: BaseResponse) -> None:
+        self.sample_count += 1
+        if response.content:
+            self.content_parser.add_sample(response.content)
 
     @staticmethod
     def generate_redirect_regex(first_loc: str, first_path: str, second_loc: str, second_path: str) -> str:
@@ -149,6 +221,7 @@ class Scanner(BaseScanner):
         )
         first_response = self.requester.request(first_path)
         self.response = first_response
+        self.sample_count = 1
         time.sleep(options["delay"])
 
         # Another test was performed before and has the same response as this
@@ -163,6 +236,7 @@ class Scanner(BaseScanner):
             rand_stealth_word(omit=first_path),
         )
         second_response = self.requester.request(second_path)
+        self.sample_count += 1
         time.sleep(options["delay"])
 
         if first_response.redirect and second_response.redirect:
@@ -181,6 +255,22 @@ class Scanner(BaseScanner):
         self.content_parser = DynamicContentParser(
             first_response.content, second_response.content
         )
+        self.auto_calibrate((first_path, second_path))
+
+    def auto_calibrate(self, tested_paths: tuple[str, ...]) -> None:
+        if not self.should_auto_calibrate():
+            return
+
+        omitted = set(tested_paths)
+        for _ in range(AUTO_CALIBRATION_EXTRA_SAMPLES):
+            sample_path = self.path.replace(
+                WILDCARD_TEST_POINT_MARKER,
+                rand_stealth_word(omit=omitted),
+            )
+            omitted.add(sample_path)
+            sample_response = self.requester.request(sample_path)
+            self.add_calibration_sample(sample_response)
+            time.sleep(options["delay"])
 
 
 class AsyncScanner(BaseScanner):
@@ -219,6 +309,7 @@ class AsyncScanner(BaseScanner):
         )
         first_response = await self.requester.request(first_path)
         self.response = first_response
+        self.sample_count = 1
         await asyncio.sleep(options["delay"])
 
         duplicate = self.get_duplicate(first_response)
@@ -234,6 +325,7 @@ class AsyncScanner(BaseScanner):
             rand_stealth_word(omit=first_path),
         )
         second_response = await self.requester.request(second_path)
+        self.sample_count += 1
         await asyncio.sleep(options["delay"])
 
         if first_response.redirect and second_response.redirect:
@@ -250,3 +342,19 @@ class AsyncScanner(BaseScanner):
         self.content_parser = DynamicContentParser(
             first_response.content, second_response.content
         )
+        await self.auto_calibrate((first_path, second_path))
+
+    async def auto_calibrate(self, tested_paths: tuple[str, ...]) -> None:
+        if not self.should_auto_calibrate():
+            return
+
+        omitted = set(tested_paths)
+        for _ in range(AUTO_CALIBRATION_EXTRA_SAMPLES):
+            sample_path = self.path.replace(
+                WILDCARD_TEST_POINT_MARKER,
+                rand_stealth_word(omit=omitted),
+            )
+            omitted.add(sample_path)
+            sample_response = await self.requester.request(sample_path)
+            self.add_calibration_sample(sample_response)
+            await asyncio.sleep(options["delay"])

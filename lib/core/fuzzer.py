@@ -30,6 +30,7 @@ from lib.connection.response import BaseResponse
 from lib.core.data import blacklists, options
 from lib.core.dictionary import Dictionary
 from lib.core.exceptions import RequestException
+from lib.core.filters import matches_numeric_ranges, matches_time_filters
 from lib.core.logger import logger
 from lib.core.scanner import AsyncScanner, BaseScanner, Scanner
 from lib.core.settings import (
@@ -39,6 +40,12 @@ from lib.core.settings import (
 )
 from lib.parse.url import clean_path
 from lib.utils.common import get_readable_size, lstrip_once
+from lib.utils.diff import normalize_dynamic_content
+
+
+AUTO_CALIBRATION_DUPLICATE_THRESHOLD = 8
+AUTO_CALIBRATION_FORCED_THRESHOLD = 3
+AUTO_CALIBRATION_MIN_CONTENT_LENGTH = 32
 
 
 class BaseFuzzer:
@@ -58,6 +65,8 @@ class BaseFuzzer:
         self.match_callbacks = match_callbacks
         self.not_found_callbacks = not_found_callbacks
         self.error_callbacks = error_callbacks
+        self._similar_fingerprints: dict[tuple, int] = {}
+        self._auto_calibrated_fingerprints: set[tuple] = set()
 
         self.scanners: dict[str, dict[str, Scanner]] = {
             "default": {},
@@ -128,6 +137,15 @@ class BaseFuzzer:
         ):
             return True
 
+        if not self.matches_advanced_matchers(resp):
+            return True
+
+        if self.matches_advanced_filters(resp):
+            return True
+
+        if self.is_auto_calibrated(resp):
+            return True
+
         if (
             options["filter_threshold"]
             and self._hashes.get(hash(resp), 0) >= options["filter_threshold"]
@@ -135,6 +153,130 @@ class BaseFuzzer:
             return True
 
         return False
+
+    def matches_advanced_matchers(self, resp: BaseResponse) -> bool:
+        checks = []
+
+        if options["match_status_codes"]:
+            checks.append(resp.status in options["match_status_codes"])
+        if options["match_sizes"]:
+            checks.append(matches_numeric_ranges(resp.length, options["match_sizes"]))
+        if options["match_words"]:
+            checks.append(matches_numeric_ranges(resp.words, options["match_words"]))
+        if options["match_lines"]:
+            checks.append(matches_numeric_ranges(resp.lines, options["match_lines"]))
+        if options["match_regex"]:
+            checks.append(bool(re.search(options["match_regex"], resp.text)))
+        if options["match_time"]:
+            checks.append(matches_time_filters(resp.elapsed, options["match_time"]))
+
+        return self._combine_advanced_checks(checks, options["matcher_mode"], default=True)
+
+    def matches_advanced_filters(self, resp: BaseResponse) -> bool:
+        checks = []
+
+        if options["filter_status_codes"]:
+            checks.append(resp.status in options["filter_status_codes"])
+        if options["filter_sizes"]:
+            checks.append(matches_numeric_ranges(resp.length, options["filter_sizes"]))
+        if options["filter_words"]:
+            checks.append(matches_numeric_ranges(resp.words, options["filter_words"]))
+        if options["filter_lines"]:
+            checks.append(matches_numeric_ranges(resp.lines, options["filter_lines"]))
+        if options["filter_regex"]:
+            checks.append(bool(re.search(options["filter_regex"], resp.text)))
+        if options["filter_time"]:
+            checks.append(matches_time_filters(resp.elapsed, options["filter_time"]))
+
+        return self._combine_advanced_checks(checks, options["filter_mode"], default=False)
+
+    @staticmethod
+    def _combine_advanced_checks(checks: list[bool], mode: str, default: bool) -> bool:
+        if not checks:
+            return default
+
+        if mode == "and":
+            return all(checks)
+
+        return any(checks)
+
+    def is_auto_calibrated(self, resp: BaseResponse) -> bool:
+        fingerprint = self.response_fingerprint(resp)
+        if fingerprint in self._auto_calibrated_fingerprints:
+            logger.debug(f'"{resp.url}" filtered by auto-calibration fingerprint')
+            return True
+
+        if not self.should_record_auto_calibration(resp):
+            return False
+
+        self._similar_fingerprints[fingerprint] = (
+            self._similar_fingerprints.get(fingerprint, 0) + 1
+        )
+        threshold = (
+            AUTO_CALIBRATION_FORCED_THRESHOLD
+            if options["auto_calibration"]
+            else AUTO_CALIBRATION_DUPLICATE_THRESHOLD
+        )
+
+        if self._similar_fingerprints[fingerprint] < threshold:
+            return False
+
+        self._auto_calibrated_fingerprints.add(fingerprint)
+        logger.debug(
+            f'"{resp.url}" filtered by repeated response auto-calibration '
+            f'(threshold={threshold})'
+        )
+        return True
+
+    def should_record_auto_calibration(self, resp: BaseResponse) -> bool:
+        if self.has_advanced_matchers():
+            return False
+
+        if resp.length < AUTO_CALIBRATION_MIN_CONTENT_LENGTH:
+            return False
+
+        if options["auto_calibration"]:
+            return True
+
+        if 400 <= resp.status <= 599:
+            return True
+
+        path = clean_path(resp.full_path).strip("/")
+        if path and path in resp.text:
+            return True
+
+        return bool(resp.redirect)
+
+    @staticmethod
+    def has_advanced_matchers() -> bool:
+        return any(
+            (
+                options["match_status_codes"],
+                options["match_sizes"],
+                options["match_words"],
+                options["match_lines"],
+                options["match_regex"],
+                options["match_time"],
+            )
+        )
+
+    @staticmethod
+    def response_fingerprint(resp: BaseResponse) -> tuple:
+        path = clean_path(resp.full_path).strip("/")
+        body = normalize_dynamic_content(resp.text)
+        redirect = clean_path(resp.redirect)
+
+        if path:
+            body = body.replace(path, "__PATH__")
+            redirect = redirect.replace(path, "__PATH__")
+
+        return (
+            resp.status,
+            resp.type,
+            redirect,
+            len(body) // 64,
+            hash(body[:4096]),
+        )
 
     def process_response(self, path: str, response: BaseResponse) -> None:
         scanners = self.get_scanners_for(path)
@@ -349,6 +491,10 @@ class NativeFuzzer(Fuzzer):
                         for callback in self.error_callbacks:
                             callback(error)
                         continue
+                    if response.filtered:
+                        for callback in self.not_found_callbacks:
+                            callback(response)
+                        continue
                     self.process_response(path, response)
         finally:
             self._finished = True
@@ -440,8 +586,9 @@ class AsyncFuzzer(BaseFuzzer):
     def play(self) -> None:
         self._play_event.set()
 
-    def pause(self) -> None:
+    def pause(self) -> bool:
         self._play_event.clear()
+        return True
 
     def quit(self) -> None:
         for task in self._background_tasks:

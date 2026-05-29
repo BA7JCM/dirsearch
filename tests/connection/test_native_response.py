@@ -80,3 +80,19 @@ class TestNativeResponse(TestCase):
         self.assertEqual(response.body, b"\xff\xfeadmin")
         self.assertEqual(response.content, "��admin")
         self.assertEqual(response.length, len(response.body))
+
+    def test_native_filtered_response_keeps_explicit_length_without_body(self):
+        response = NativeResponse(
+            "https://example.com/missing",
+            404,
+            [("content-type", "text/plain")],
+            [],
+            length=123,
+            filtered=True,
+            filter_reason="advanced_filter",
+        )
+
+        self.assertTrue(response.filtered)
+        self.assertEqual(response.filter_reason, "advanced_filter")
+        self.assertEqual(response.body, b"")
+        self.assertEqual(response.length, 123)

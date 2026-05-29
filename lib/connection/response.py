@@ -72,6 +72,24 @@ class BaseResponse:
     def size(self) -> str:
         return get_readable_size(self.length)
 
+    @property
+    def text(self) -> str:
+        if self.content:
+            return self.content
+
+        return self.body.decode(DEFAULT_ENCODING, errors="ignore")
+
+    @property
+    def words(self) -> int:
+        return len(self.text.split())
+
+    @property
+    def lines(self) -> int:
+        if not self.text:
+            return 0
+
+        return self.text.count("\n") + 1
+
     def __hash__(self) -> int:
         # Hash the static parts of the response only.
         # See https://github.com/maurosoria/dirsearch/pull/1436#issuecomment-2476390956
@@ -138,6 +156,9 @@ class NativeResponse(BaseResponse):
         headers: list[tuple[str, str]],
         body: bytes | bytearray | list[int],
         elapsed: float = 0.0,
+        length: int | None = None,
+        filtered: bool = False,
+        filter_reason: str | None = None,
     ) -> None:
         response = type(
             "NativeHTTPResponse",
@@ -151,6 +172,16 @@ class NativeResponse(BaseResponse):
         )()
         super().__init__(url, response, elapsed)
 
+        self._length = length
+        self.filtered = filtered
+        self.filter_reason = filter_reason
         self.body = bytes(body)
         if not is_binary(self.body):
             self.content = self.body.decode(DEFAULT_ENCODING, errors="replace")
+
+    @property
+    def length(self) -> int:
+        if self._length is not None:
+            return self._length
+
+        return super().length

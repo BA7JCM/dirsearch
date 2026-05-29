@@ -73,6 +73,7 @@ Options:
                         dirsearch path /sessions, or $HOME/.dirsearch/sessions
                         when bundled)
     -a, --async         Enable asynchronous mode
+    --sync, --no-async  Use synchronous Python mode
     -r, --recursive     Brute-force recursively
     --deep-recursive    Perform recursive scan on every directory depth (e.g.
                         api/users -> api/)
@@ -122,9 +123,52 @@ Options:
                         Maximum runtime for a target
     --exit-on-error     Exit whenever an error occurs
 
+  Advanced Filtering:
+    --auto-calibration  Force extra wildcard calibration from the beginning
+    --matcher-mode=MODE, --mmode=MODE
+                        Advanced matcher operator: and, or
+    --filter-mode=MODE, --fmode=MODE
+                        Advanced filter operator: and, or
+    --match-status=CODES, --mc=CODES
+                        Advanced matcher for status codes, separated by
+                        commas, support ranges
+    --filter-status=CODES, --fc=CODES
+                        Advanced filter for status codes, separated by commas,
+                        support ranges
+    --match-size=SIZES, --ms=SIZES
+                        Advanced matcher for response length, separated by
+                        commas, support ranges
+    --filter-size=SIZES, --fs=SIZES
+                        Advanced filter for response length, separated by
+                        commas, support ranges
+    --match-words=WORDS, --mw=WORDS
+                        Advanced matcher for response word count, separated by
+                        commas, support ranges
+    --filter-words=WORDS, --fw=WORDS
+                        Advanced filter for response word count, separated by
+                        commas, support ranges
+    --match-lines=LINES, --ml=LINES
+                        Advanced matcher for response line count, separated by
+                        commas, support ranges
+    --filter-lines=LINES, --fl=LINES
+                        Advanced filter for response line count, separated by
+                        commas, support ranges
+    --match-regex=REGEX, --mr=REGEX
+                        Advanced matcher for response body regular expression
+    --filter-regex=REGEX, --fr=REGEX
+                        Advanced filter for response body regular expression
+    --match-time=TIME, --mt=TIME
+                        Advanced matcher for elapsed milliseconds, e.g. >100
+                        or <100
+    --filter-time=TIME, --ft=TIME
+                        Advanced filter for elapsed milliseconds, e.g. >100 or
+                        <100
+
   Request Settings:
     -m METHOD, --http-method=METHOD
                         HTTP method (default: GET)
+    --request-backend=BACKEND
+                        Request backend: python, native (default: python)
     -d DATA, --data=DATA
                         HTTP request data
     --data-file=PATH    File contains HTTP request data

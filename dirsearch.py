@@ -42,8 +42,8 @@ __all__ = [
     "WordlistTemplate",
 ]
 
-if sys.version_info < (3, 9):
-    sys.stderr.write("Sorry, dirsearch requires Python 3.9 or higher\n")
+if sys.version_info < (3, 11):
+    sys.stderr.write("Sorry, dirsearch requires Python 3.11 or higher\n")
     sys.exit(1)
 
 
