@@ -36,6 +36,7 @@ from tests.connection.test_requester import (  # noqa: F401
 from tests.connection.test_response import TestResponse  # noqa: F401
 from tests.connection.test_response import TestAsyncResponse  # noqa: F401
 from tests.controller.test_session_store import TestSessionStore  # noqa: F401
+from tests.core.test_async_fuzzer import TestAsyncFuzzer  # noqa: F401
 from tests.core.test_dictionary_templates import TestDictionaryTemplates  # noqa: F401
 from tests.core.test_importable_api import TestImportableAPI  # noqa: F401
 from tests.core.test_native_fuzzer import TestNativeFuzzer  # noqa: F401

@@ -389,15 +389,8 @@ class AsyncFuzzer(BaseFuzzer):
 
     async def setup_scanners(self) -> None:
         # Default scanners (wildcard testers)
-        self.scanners["default"].update(
-            {
-                "index": await AsyncScanner.create(
-                    self._requester, path=self._base_path
-                ),
-                "random": await AsyncScanner.create(
-                    self._requester, path=self._base_path + WILDCARD_TEST_POINT_MARKER
-                ),
-            }
+        self.scanners["default"]["random"] = await AsyncScanner.create(
+            self._requester, path=self._base_path + WILDCARD_TEST_POINT_MARKER
         )
 
         if options["exclude_response"]:
