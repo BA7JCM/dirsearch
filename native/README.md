@@ -8,6 +8,12 @@ It exposes two PyO3 functions:
 - `generate_wordlist(...)` for deterministic ordered wordlist generation.
 - `scan_http(...)` for batch HTTP GET requests using `reqwest` and `tokio`.
 
+`scan_http(...)` also evaluates the cheap legacy status/size filters and the
+advanced match/filter options in native code. Filtered responses are returned as
+lightweight events with metadata and an empty body so Python can keep progress
+and not-found callbacks authoritative. Native regex matching uses Rust's
+`regex` crate; patterns unsupported by that engine fail before the scan starts.
+
 Build locally with a Rust toolchain and maturin:
 
 ```sh

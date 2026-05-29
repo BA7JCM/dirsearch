@@ -2,10 +2,12 @@ use indexmap::IndexSet;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use rayon::prelude::*;
+use regex::Regex;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpStream;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 #[pyclass]
@@ -21,12 +23,247 @@ struct NativeHttpResult {
     #[pyo3(get)]
     error: Option<String>,
     #[pyo3(get)]
+    filtered: bool,
+    #[pyo3(get)]
+    filter_reason: Option<String>,
+    #[pyo3(get)]
     headers: Vec<(String, String)>,
     #[pyo3(get)]
     body: Vec<u8>,
 }
 
+type NumericRange = (usize, usize);
+type TimeFilter = (String, f64);
+type HeaderPairs = Vec<(String, String)>;
+type RawHttpResponse = (u16, HeaderPairs, Vec<u8>, usize);
+
+#[derive(Clone)]
+struct NativeFilterConfig {
+    include_status_codes: Vec<u16>,
+    exclude_status_codes: Vec<u16>,
+    minimum_response_size: usize,
+    maximum_response_size: usize,
+    matcher_mode: String,
+    filter_mode: String,
+    match_status_codes: Vec<u16>,
+    filter_status_codes: Vec<u16>,
+    match_sizes: Vec<NumericRange>,
+    filter_sizes: Vec<NumericRange>,
+    match_words: Vec<NumericRange>,
+    filter_words: Vec<NumericRange>,
+    match_lines: Vec<NumericRange>,
+    filter_lines: Vec<NumericRange>,
+    match_regex: Option<Regex>,
+    filter_regex: Option<Regex>,
+    match_time: Vec<TimeFilter>,
+    filter_time: Vec<TimeFilter>,
+}
+
+impl NativeFilterConfig {
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        include_status_codes: Vec<u16>,
+        exclude_status_codes: Vec<u16>,
+        minimum_response_size: usize,
+        maximum_response_size: usize,
+        matcher_mode: String,
+        filter_mode: String,
+        match_status_codes: Vec<u16>,
+        filter_status_codes: Vec<u16>,
+        match_sizes: Vec<NumericRange>,
+        filter_sizes: Vec<NumericRange>,
+        match_words: Vec<NumericRange>,
+        filter_words: Vec<NumericRange>,
+        match_lines: Vec<NumericRange>,
+        filter_lines: Vec<NumericRange>,
+        match_regex: Option<String>,
+        filter_regex: Option<String>,
+        match_time: Vec<TimeFilter>,
+        filter_time: Vec<TimeFilter>,
+    ) -> Result<Self, String> {
+        Ok(Self {
+            include_status_codes,
+            exclude_status_codes,
+            minimum_response_size,
+            maximum_response_size,
+            matcher_mode,
+            filter_mode,
+            match_status_codes,
+            filter_status_codes,
+            match_sizes,
+            filter_sizes,
+            match_words,
+            filter_words,
+            match_lines,
+            filter_lines,
+            match_regex: compile_regex(match_regex, "--match-regex")?,
+            filter_regex: compile_regex(filter_regex, "--filter-regex")?,
+            match_time,
+            filter_time,
+        })
+    }
+
+    fn filter_reason(
+        &self,
+        status: u16,
+        length: usize,
+        body: &[u8],
+        elapsed_ms: f64,
+    ) -> Option<&'static str> {
+        if self.exclude_status_codes.contains(&status) {
+            return Some("exclude_status");
+        }
+
+        if !self.include_status_codes.is_empty() && !self.include_status_codes.contains(&status) {
+            return Some("include_status");
+        }
+
+        if length < self.minimum_response_size {
+            return Some("minimum_response_size");
+        }
+
+        if self.maximum_response_size > 0 && length > self.maximum_response_size {
+            return Some("maximum_response_size");
+        }
+
+        let text = self
+            .needs_text()
+            .then(|| String::from_utf8_lossy(body).into_owned());
+        let text = text.as_deref();
+
+        if !self.matches_advanced_matchers(status, length, text, elapsed_ms) {
+            return Some("advanced_matcher");
+        }
+
+        if self.matches_advanced_filters(status, length, text, elapsed_ms) {
+            return Some("advanced_filter");
+        }
+
+        None
+    }
+
+    fn needs_text(&self) -> bool {
+        !self.match_words.is_empty()
+            || !self.filter_words.is_empty()
+            || !self.match_lines.is_empty()
+            || !self.filter_lines.is_empty()
+            || self.match_regex.is_some()
+            || self.filter_regex.is_some()
+    }
+
+    fn matches_advanced_matchers(
+        &self,
+        status: u16,
+        length: usize,
+        text: Option<&str>,
+        elapsed_ms: f64,
+    ) -> bool {
+        let mut checks = Vec::new();
+
+        if !self.match_status_codes.is_empty() {
+            checks.push(self.match_status_codes.contains(&status));
+        }
+        if !self.match_sizes.is_empty() {
+            checks.push(matches_numeric_ranges(length, &self.match_sizes));
+        }
+        if !self.match_words.is_empty() {
+            checks.push(matches_numeric_ranges(word_count(text), &self.match_words));
+        }
+        if !self.match_lines.is_empty() {
+            checks.push(matches_numeric_ranges(line_count(text), &self.match_lines));
+        }
+        if let Some(regex) = &self.match_regex {
+            checks.push(regex.is_match(text.unwrap_or_default()));
+        }
+        if !self.match_time.is_empty() {
+            checks.push(matches_time_filters(elapsed_ms, &self.match_time));
+        }
+
+        combine_advanced_checks(&checks, &self.matcher_mode, true)
+    }
+
+    fn matches_advanced_filters(
+        &self,
+        status: u16,
+        length: usize,
+        text: Option<&str>,
+        elapsed_ms: f64,
+    ) -> bool {
+        let mut checks = Vec::new();
+
+        if !self.filter_status_codes.is_empty() {
+            checks.push(self.filter_status_codes.contains(&status));
+        }
+        if !self.filter_sizes.is_empty() {
+            checks.push(matches_numeric_ranges(length, &self.filter_sizes));
+        }
+        if !self.filter_words.is_empty() {
+            checks.push(matches_numeric_ranges(word_count(text), &self.filter_words));
+        }
+        if !self.filter_lines.is_empty() {
+            checks.push(matches_numeric_ranges(line_count(text), &self.filter_lines));
+        }
+        if let Some(regex) = &self.filter_regex {
+            checks.push(regex.is_match(text.unwrap_or_default()));
+        }
+        if !self.filter_time.is_empty() {
+            checks.push(matches_time_filters(elapsed_ms, &self.filter_time));
+        }
+
+        combine_advanced_checks(&checks, &self.filter_mode, false)
+    }
+}
+
+fn compile_regex(pattern: Option<String>, label: &str) -> Result<Option<Regex>, String> {
+    match pattern {
+        Some(pattern) => Regex::new(&pattern).map(Some).map_err(|error| {
+            format!("Invalid {label} regular expression for native backend: {error}")
+        }),
+        None => Ok(None),
+    }
+}
+
+fn matches_numeric_ranges(value: usize, ranges: &[NumericRange]) -> bool {
+    ranges
+        .iter()
+        .any(|(minimum, maximum)| *minimum <= value && value <= *maximum)
+}
+
+fn matches_time_filters(elapsed_ms: f64, filters: &[TimeFilter]) -> bool {
+    filters.iter().any(|(operator, value)| {
+        (operator == ">" && elapsed_ms > *value)
+            || (operator == "<" && elapsed_ms < *value)
+            || (operator == "=" && elapsed_ms == *value)
+    })
+}
+
+fn combine_advanced_checks(checks: &[bool], mode: &str, default: bool) -> bool {
+    if checks.is_empty() {
+        return default;
+    }
+
+    if mode == "and" {
+        return checks.iter().all(|check| *check);
+    }
+
+    checks.iter().any(|check| *check)
+}
+
+fn word_count(text: Option<&str>) -> usize {
+    text.unwrap_or_default().split_whitespace().count()
+}
+
+fn line_count(text: Option<&str>) -> usize {
+    let text = text.unwrap_or_default();
+    if text.is_empty() {
+        return 0;
+    }
+
+    text.matches('\n').count() + 1
+}
+
 #[pyfunction]
+#[allow(clippy::too_many_arguments)]
 #[pyo3(signature = (
     files,
     extensions,
@@ -127,6 +364,7 @@ fn lstrip_once(input: &str, pattern: &str) -> String {
 }
 
 #[pyfunction]
+#[allow(clippy::too_many_arguments)]
 #[pyo3(signature = (
     base_url,
     paths,
@@ -136,6 +374,24 @@ fn lstrip_once(input: &str, pattern: &str) -> String {
     max_retries=0,
     follow_redirects=false,
     max_body_size=83886080,
+    include_status_codes=Vec::new(),
+    exclude_status_codes=Vec::new(),
+    minimum_response_size=0,
+    maximum_response_size=0,
+    matcher_mode="or".to_string(),
+    filter_mode="or".to_string(),
+    match_status_codes=Vec::new(),
+    filter_status_codes=Vec::new(),
+    match_sizes=Vec::new(),
+    filter_sizes=Vec::new(),
+    match_words=Vec::new(),
+    filter_words=Vec::new(),
+    match_lines=Vec::new(),
+    filter_lines=Vec::new(),
+    match_regex=None,
+    filter_regex=None,
+    match_time=Vec::new(),
+    filter_time=Vec::new(),
 ))]
 fn scan_http(
     py: Python<'_>,
@@ -147,7 +403,49 @@ fn scan_http(
     max_retries: usize,
     follow_redirects: bool,
     max_body_size: usize,
+    include_status_codes: Vec<u16>,
+    exclude_status_codes: Vec<u16>,
+    minimum_response_size: usize,
+    maximum_response_size: usize,
+    matcher_mode: String,
+    filter_mode: String,
+    match_status_codes: Vec<u16>,
+    filter_status_codes: Vec<u16>,
+    match_sizes: Vec<NumericRange>,
+    filter_sizes: Vec<NumericRange>,
+    match_words: Vec<NumericRange>,
+    filter_words: Vec<NumericRange>,
+    match_lines: Vec<NumericRange>,
+    filter_lines: Vec<NumericRange>,
+    match_regex: Option<String>,
+    filter_regex: Option<String>,
+    match_time: Vec<TimeFilter>,
+    filter_time: Vec<TimeFilter>,
 ) -> PyResult<Vec<NativeHttpResult>> {
+    let filter_config = Arc::new(
+        NativeFilterConfig::new(
+            include_status_codes,
+            exclude_status_codes,
+            minimum_response_size,
+            maximum_response_size,
+            matcher_mode,
+            filter_mode,
+            match_status_codes,
+            filter_status_codes,
+            match_sizes,
+            filter_sizes,
+            match_words,
+            filter_words,
+            match_lines,
+            filter_lines,
+            match_regex,
+            filter_regex,
+            match_time,
+            filter_time,
+        )
+        .map_err(PyRuntimeError::new_err)?,
+    );
+
     py.allow_threads(move || {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
@@ -187,19 +485,12 @@ fn scan_http(
                 let base_url = base_url.clone();
                 let raw_headers = raw_headers.clone();
                 let semaphore = semaphore.clone();
+                let filter_config = filter_config.clone();
                 tasks.push(tokio::spawn(async move {
                     let _permit = match semaphore.acquire_owned().await {
                         Ok(permit) => permit,
                         Err(error) => {
-                            return NativeHttpResult {
-                                path,
-                                status: 0,
-                                length: 0,
-                                elapsed_ms: 0.0,
-                                error: Some(error.to_string()),
-                                headers: Vec::new(),
-                                body: Vec::new(),
-                            };
+                            return native_error_result(path, 0.0, error.to_string());
                         }
                     };
                     let url = format!("{base_url}{path}");
@@ -208,6 +499,7 @@ fn scan_http(
                     if should_use_raw_http(&base_url, &path) {
                         let raw_base_url = base_url.clone();
                         let raw_path = path.clone();
+                        let raw_filter_config = filter_config.clone();
                         let raw_result = tokio::task::spawn_blocking(move || {
                             raw_http_get(
                                 &raw_base_url,
@@ -216,21 +508,18 @@ fn scan_http(
                                 timeout_secs,
                                 max_body_size,
                                 start,
+                                raw_filter_config.as_ref(),
                             )
                         })
                         .await;
 
                         return match raw_result {
                             Ok(result) => result,
-                            Err(error) => NativeHttpResult {
+                            Err(error) => native_error_result(
                                 path,
-                                status: 0,
-                                length: 0,
-                                elapsed_ms: start.elapsed().as_secs_f64() * 1000.0,
-                                error: Some(error.to_string()),
-                                headers: Vec::new(),
-                                body: Vec::new(),
-                            },
+                                start.elapsed().as_secs_f64() * 1000.0,
+                                error.to_string(),
+                            ),
                         };
                     }
 
@@ -249,15 +538,11 @@ fn scan_http(
                     let response = match response {
                         Some(response) => response,
                         None => {
-                            return NativeHttpResult {
+                            return native_error_result(
                                 path,
-                                status: 0,
-                                length: 0,
-                                elapsed_ms: start.elapsed().as_secs_f64() * 1000.0,
-                                error: last_error,
-                                headers: Vec::new(),
-                                body: Vec::new(),
-                            };
+                                start.elapsed().as_secs_f64() * 1000.0,
+                                last_error.unwrap_or_else(|| "request failed".to_string()),
+                            );
                         }
                     };
                     let status = response.status().as_u16();
@@ -274,28 +559,23 @@ fn scan_http(
                     let body = match response.bytes().await {
                         Ok(body) => body,
                         Err(error) => {
-                            return NativeHttpResult {
+                            return native_error_result(
                                 path,
-                                status,
-                                length: 0,
-                                elapsed_ms: start.elapsed().as_secs_f64() * 1000.0,
-                                error: Some(error.to_string()),
-                                headers,
-                                body: Vec::new(),
-                            };
+                                start.elapsed().as_secs_f64() * 1000.0,
+                                error.to_string(),
+                            );
                         }
                     };
                     let length = body.len();
                     let body = body[..length.min(max_body_size)].to_vec();
-                    NativeHttpResult {
+                    native_http_result(
                         path,
                         status,
-                        length,
-                        elapsed_ms: start.elapsed().as_secs_f64() * 1000.0,
-                        error: None,
                         headers,
                         body,
-                    }
+                        start.elapsed().as_secs_f64() * 1000.0,
+                        filter_config.as_ref(),
+                    )
                 }));
             }
 
@@ -309,6 +589,55 @@ fn scan_http(
             Ok(results)
         })
     })
+}
+
+fn native_http_result(
+    path: String,
+    status: u16,
+    headers: Vec<(String, String)>,
+    body: Vec<u8>,
+    elapsed_ms: f64,
+    filter_config: &NativeFilterConfig,
+) -> NativeHttpResult {
+    let length = response_length(&headers, body.len());
+    let filter_reason = filter_config
+        .filter_reason(status, length, &body, elapsed_ms)
+        .map(str::to_string);
+    let filtered = filter_reason.is_some();
+
+    NativeHttpResult {
+        path,
+        status,
+        length,
+        elapsed_ms,
+        error: None,
+        filtered,
+        filter_reason,
+        headers,
+        body: if filtered { Vec::new() } else { body },
+    }
+}
+
+fn native_error_result(path: String, elapsed_ms: f64, error: String) -> NativeHttpResult {
+    NativeHttpResult {
+        path,
+        status: 0,
+        length: 0,
+        elapsed_ms,
+        error: Some(error),
+        filtered: false,
+        filter_reason: None,
+        headers: Vec::new(),
+        body: Vec::new(),
+    }
+}
+
+fn response_length(headers: &[(String, String)], body_length: usize) -> usize {
+    headers
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case("content-length"))
+        .and_then(|(_, value)| value.parse::<usize>().ok())
+        .unwrap_or(body_length)
 }
 
 fn should_use_raw_http(base_url: &str, path: &str) -> bool {
@@ -325,26 +654,18 @@ fn raw_http_get(
     timeout_secs: f64,
     max_body_size: usize,
     start: Instant,
+    filter_config: &NativeFilterConfig,
 ) -> NativeHttpResult {
     match raw_http_get_inner(base_url, &path, headers, timeout_secs, max_body_size) {
-        Ok((status, headers, body, length)) => NativeHttpResult {
+        Ok((status, headers, body, _length)) => native_http_result(
             path,
             status,
-            length,
-            elapsed_ms: start.elapsed().as_secs_f64() * 1000.0,
-            error: None,
             headers,
             body,
-        },
-        Err(error) => NativeHttpResult {
-            path,
-            status: 0,
-            length: 0,
-            elapsed_ms: start.elapsed().as_secs_f64() * 1000.0,
-            error: Some(error),
-            headers: Vec::new(),
-            body: Vec::new(),
-        },
+            start.elapsed().as_secs_f64() * 1000.0,
+            filter_config,
+        ),
+        Err(error) => native_error_result(path, start.elapsed().as_secs_f64() * 1000.0, error),
     }
 }
 
@@ -354,7 +675,7 @@ fn raw_http_get_inner(
     headers: &[(String, String)],
     timeout_secs: f64,
     max_body_size: usize,
-) -> Result<(u16, Vec<(String, String)>, Vec<u8>, usize), String> {
+) -> Result<RawHttpResponse, String> {
     let url = reqwest::Url::parse(base_url).map_err(|error| error.to_string())?;
     if url.scheme() != "http" {
         return Err("Raw HTTP path preservation only supports http:// URLs".to_string());
@@ -415,7 +736,7 @@ fn raw_request_target(base_path: &str, path: &str) -> String {
 fn parse_raw_http_response(
     raw_response: Vec<u8>,
     max_body_size: usize,
-) -> Result<(u16, Vec<(String, String)>, Vec<u8>, usize), String> {
+) -> Result<RawHttpResponse, String> {
     let header_end = raw_response
         .windows(4)
         .position(|window| window == b"\r\n\r\n")
@@ -569,6 +890,172 @@ fn apply_case(path: String, lowercase: bool, uppercase: bool, capitalization: bo
         }
     } else {
         path
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn default_filter_config() -> NativeFilterConfig {
+        NativeFilterConfig::new(
+            Vec::new(),
+            Vec::new(),
+            0,
+            0,
+            "or".to_string(),
+            "or".to_string(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            None,
+            None,
+            Vec::new(),
+            Vec::new(),
+        )
+        .unwrap()
+    }
+
+    fn content_length(value: usize) -> Vec<(String, String)> {
+        vec![("Content-Length".to_string(), value.to_string())]
+    }
+
+    #[test]
+    fn legacy_status_filter_returns_empty_body_with_metadata() {
+        let mut config = default_filter_config();
+        config.exclude_status_codes = vec![404];
+
+        let result = native_http_result(
+            "missing".to_string(),
+            404,
+            content_length(64),
+            b"not found body".to_vec(),
+            25.0,
+            &config,
+        );
+
+        assert!(result.filtered);
+        assert_eq!(result.filter_reason.as_deref(), Some("exclude_status"));
+        assert_eq!(result.length, 64);
+        assert_eq!(result.elapsed_ms, 25.0);
+        assert!(result.body.is_empty());
+    }
+
+    #[test]
+    fn advanced_matchers_and_filters_respect_modes() {
+        let mut config = default_filter_config();
+        config.matcher_mode = "and".to_string();
+        config.filter_mode = "or".to_string();
+        config.match_status_codes = vec![200];
+        config.match_words = vec![(2, 2)];
+        config.match_lines = vec![(1, 1)];
+        config.match_time = vec![(">".to_string(), 10.0)];
+        config.filter_regex = Some(Regex::new("not found").unwrap());
+
+        let keep = native_http_result(
+            "admin".to_string(),
+            200,
+            Vec::new(),
+            b"admin panel".to_vec(),
+            20.0,
+            &config,
+        );
+        assert!(!keep.filtered);
+        assert_eq!(keep.body, b"admin panel");
+
+        let filtered = native_http_result(
+            "missing".to_string(),
+            200,
+            Vec::new(),
+            b"not found".to_vec(),
+            20.0,
+            &config,
+        );
+        assert!(filtered.filtered);
+        assert_eq!(filtered.filter_reason.as_deref(), Some("advanced_filter"));
+        assert!(filtered.body.is_empty());
+
+        let matcher_miss = native_http_result(
+            "short".to_string(),
+            200,
+            Vec::new(),
+            b"admin".to_vec(),
+            20.0,
+            &config,
+        );
+        assert!(matcher_miss.filtered);
+        assert_eq!(
+            matcher_miss.filter_reason.as_deref(),
+            Some("advanced_matcher")
+        );
+    }
+
+    #[test]
+    fn advanced_filter_and_mode_requires_all_checks() {
+        let mut config = default_filter_config();
+        config.filter_mode = "and".to_string();
+        config.filter_status_codes = vec![404];
+        config.filter_sizes = vec![(10, 20)];
+
+        let filtered = native_http_result(
+            "missing".to_string(),
+            404,
+            content_length(12),
+            b"not found".to_vec(),
+            1.0,
+            &config,
+        );
+        assert!(filtered.filtered);
+        assert_eq!(filtered.filter_reason.as_deref(), Some("advanced_filter"));
+
+        let keep = native_http_result(
+            "small".to_string(),
+            404,
+            content_length(5),
+            b"small".to_vec(),
+            1.0,
+            &config,
+        );
+        assert!(!keep.filtered);
+    }
+
+    #[test]
+    fn regex_compile_errors_are_reported() {
+        let error = NativeFilterConfig::new(
+            Vec::new(),
+            Vec::new(),
+            0,
+            0,
+            "or".to_string(),
+            "or".to_string(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Some("(".to_string()),
+            None,
+            Vec::new(),
+            Vec::new(),
+        )
+        .err()
+        .unwrap();
+
+        assert!(error.contains("Invalid --match-regex regular expression"));
+    }
+
+    #[test]
+    fn response_length_prefers_content_length_header() {
+        assert_eq!(response_length(&content_length(123), 2), 123);
+        assert_eq!(response_length(&[], 2), 2);
     }
 }
 

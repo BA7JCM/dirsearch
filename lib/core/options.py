@@ -37,6 +37,11 @@ from lib.core.request_backend import (
     REQUEST_BACKENDS,
     get_native_request_backend_error,
 )
+from lib.core.filters import (
+    parse_numeric_ranges,
+    parse_time_filters,
+    validate_regex,
+)
 from lib.core.wordlist_backend import WORDLIST_BACKENDS
 from lib.parse.cmdline import parse_arguments
 from lib.parse.config import ConfigParser
@@ -167,6 +172,9 @@ def parse_options() -> dict[str, Any]:
         print("--wordlist-backend must be one of: " + ", ".join(WORDLIST_BACKENDS))
         sys.exit(1)
 
+    if opt.request_backend == "native" and not _is_cli_flag_present("-a", "--async"):
+        opt.async_mode = False
+
     if opt.request_backend not in REQUEST_BACKENDS:
         print("--request-backend must be one of: " + ", ".join(REQUEST_BACKENDS))
         sys.exit(1)
@@ -216,6 +224,20 @@ def parse_options() -> dict[str, Any]:
     opt.exclude_status_codes = _parse_status_codes(opt.exclude_status_codes)
     opt.recursion_status_codes = _parse_status_codes(opt.recursion_status_codes)
     opt.skip_on_status = _parse_status_codes(opt.skip_on_status)
+    opt.match_status_codes = _parse_status_codes(opt.match_status_codes)
+    opt.filter_status_codes = _parse_status_codes(opt.filter_status_codes)
+    opt.match_sizes = _parse_advanced_ranges(opt.match_sizes, "--match-size")
+    opt.filter_sizes = _parse_advanced_ranges(opt.filter_sizes, "--filter-size")
+    opt.match_words = _parse_advanced_ranges(opt.match_words, "--match-words")
+    opt.filter_words = _parse_advanced_ranges(opt.filter_words, "--filter-words")
+    opt.match_lines = _parse_advanced_ranges(opt.match_lines, "--match-lines")
+    opt.filter_lines = _parse_advanced_ranges(opt.filter_lines, "--filter-lines")
+    opt.match_time = _parse_advanced_times(opt.match_time, "--match-time")
+    opt.filter_time = _parse_advanced_times(opt.filter_time, "--filter-time")
+    _validate_advanced_mode(opt.matcher_mode, "--matcher-mode")
+    _validate_advanced_mode(opt.filter_mode, "--filter-mode")
+    _validate_advanced_regex(opt.match_regex, "--match-regex")
+    _validate_advanced_regex(opt.filter_regex, "--filter-regex")
     opt.prefixes = tuple(strip_and_uniquify(opt.prefixes.split(",")))
     opt.suffixes = tuple(strip_and_uniquify(opt.suffixes.split(",")))
     opt.subdirs = [
@@ -347,6 +369,42 @@ def _parse_status_codes(str_: str) -> set[int]:
     return status_codes
 
 
+def _parse_advanced_ranges(value: str | None, option_name: str) -> tuple[tuple[int, int], ...]:
+    try:
+        return parse_numeric_ranges(value)
+    except ValueError as error:
+        print(f"{option_name}: {error}")
+        sys.exit(1)
+
+
+def _parse_advanced_times(value: str | None, option_name: str) -> tuple[tuple[str, float], ...]:
+    try:
+        return parse_time_filters(value)
+    except ValueError as error:
+        print(f"{option_name}: {error}")
+        sys.exit(1)
+
+
+def _validate_advanced_regex(pattern: str | None, option_name: str) -> None:
+    try:
+        validate_regex(pattern, option_name)
+    except ValueError as error:
+        print(str(error))
+        sys.exit(1)
+
+
+def _validate_advanced_mode(value: str, option_name: str) -> None:
+    if value in ("and", "or"):
+        return
+
+    print(f"{option_name} must be either 'and' or 'or'")
+    sys.exit(1)
+
+
+def _is_cli_flag_present(*flags: str) -> bool:
+    return any(argument in flags for argument in sys.argv[1:])
+
+
 def _access_file(path: str) -> File:
     with File(path) as fd:
         if not fd.exists():
@@ -455,7 +513,11 @@ def merge_config(opt: Values) -> Values:
 
     # General
     opt.thread_count = opt.thread_count or config.safe_getint("general", "threads", 25)
-    opt.async_mode = opt.async_mode or config.safe_getboolean("general", "async")
+    opt.async_mode = (
+        config.safe_getboolean("general", "async", True)
+        if opt.async_mode is None
+        else opt.async_mode
+    )
     opt.filter_threshold = opt.filter_threshold or config.safe_getint("general", "filter-threshold", 0)
     opt.include_status_codes = opt.include_status_codes or config.safe_get(
         "general", "include-status"
@@ -495,6 +557,51 @@ def merge_config(opt: Values) -> Values:
     )
     opt.skip_on_status = opt.skip_on_status or config.safe_get(
         "general", "skip-on-status", ""
+    )
+    opt.auto_calibration = opt.auto_calibration or config.safe_getboolean(
+        "general", "auto-calibration"
+    )
+    opt.matcher_mode = opt.matcher_mode or config.safe_get(
+        "advanced-filtering", "matcher-mode", "or", ("and", "or")
+    )
+    opt.filter_mode = opt.filter_mode or config.safe_get(
+        "advanced-filtering", "filter-mode", "or", ("and", "or")
+    )
+    opt.match_status_codes = opt.match_status_codes or config.safe_get(
+        "advanced-filtering", "match-status", ""
+    )
+    opt.filter_status_codes = opt.filter_status_codes or config.safe_get(
+        "advanced-filtering", "filter-status", ""
+    )
+    opt.match_sizes = opt.match_sizes or config.safe_get(
+        "advanced-filtering", "match-size", ""
+    )
+    opt.filter_sizes = opt.filter_sizes or config.safe_get(
+        "advanced-filtering", "filter-size", ""
+    )
+    opt.match_words = opt.match_words or config.safe_get(
+        "advanced-filtering", "match-words", ""
+    )
+    opt.filter_words = opt.filter_words or config.safe_get(
+        "advanced-filtering", "filter-words", ""
+    )
+    opt.match_lines = opt.match_lines or config.safe_get(
+        "advanced-filtering", "match-lines", ""
+    )
+    opt.filter_lines = opt.filter_lines or config.safe_get(
+        "advanced-filtering", "filter-lines", ""
+    )
+    opt.match_regex = opt.match_regex or config.safe_get(
+        "advanced-filtering", "match-regex"
+    )
+    opt.filter_regex = opt.filter_regex or config.safe_get(
+        "advanced-filtering", "filter-regex"
+    )
+    opt.match_time = opt.match_time or config.safe_get(
+        "advanced-filtering", "match-time", ""
+    )
+    opt.filter_time = opt.filter_time or config.safe_get(
+        "advanced-filtering", "filter-time", ""
     )
     opt.max_time = opt.max_time or config.safe_getint("general", "max-time")
     opt.target_max_time = opt.target_max_time or config.safe_getint(

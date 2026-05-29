@@ -222,6 +222,13 @@ def parse_arguments() -> Values:
         help="Enable asynchronous mode",
     )
     general.add_option(
+        "--sync",
+        "--no-async",
+        action="store_false",
+        dest="async_mode",
+        help="Use synchronous Python mode",
+    )
+    general.add_option(
         "-r",
         "--recursive",
         action="store_true",
@@ -375,6 +382,127 @@ def parse_arguments() -> Values:
         action="store_true",
         dest="exit_on_error",
         help="Exit whenever an error occurs",
+    )
+
+    # Advanced Filtering
+    advanced_filtering = OptionGroup(parser, "Advanced Filtering")
+    advanced_filtering.add_option(
+        "--auto-calibration",
+        action="store_true",
+        dest="auto_calibration",
+        help="Force extra wildcard calibration from the beginning",
+    )
+    advanced_filtering.add_option(
+        "--matcher-mode",
+        "--mmode",
+        action="store",
+        dest="matcher_mode",
+        metavar="MODE",
+        help="Advanced matcher operator: and, or",
+    )
+    advanced_filtering.add_option(
+        "--filter-mode",
+        "--fmode",
+        action="store",
+        dest="filter_mode",
+        metavar="MODE",
+        help="Advanced filter operator: and, or",
+    )
+    advanced_filtering.add_option(
+        "--match-status",
+        "--mc",
+        action="store",
+        dest="match_status_codes",
+        metavar="CODES",
+        help="Advanced matcher for status codes, separated by commas, support ranges",
+    )
+    advanced_filtering.add_option(
+        "--filter-status",
+        "--fc",
+        action="store",
+        dest="filter_status_codes",
+        metavar="CODES",
+        help="Advanced filter for status codes, separated by commas, support ranges",
+    )
+    advanced_filtering.add_option(
+        "--match-size",
+        "--ms",
+        action="store",
+        dest="match_sizes",
+        metavar="SIZES",
+        help="Advanced matcher for response length, separated by commas, support ranges",
+    )
+    advanced_filtering.add_option(
+        "--filter-size",
+        "--fs",
+        action="store",
+        dest="filter_sizes",
+        metavar="SIZES",
+        help="Advanced filter for response length, separated by commas, support ranges",
+    )
+    advanced_filtering.add_option(
+        "--match-words",
+        "--mw",
+        action="store",
+        dest="match_words",
+        metavar="WORDS",
+        help="Advanced matcher for response word count, separated by commas, support ranges",
+    )
+    advanced_filtering.add_option(
+        "--filter-words",
+        "--fw",
+        action="store",
+        dest="filter_words",
+        metavar="WORDS",
+        help="Advanced filter for response word count, separated by commas, support ranges",
+    )
+    advanced_filtering.add_option(
+        "--match-lines",
+        "--ml",
+        action="store",
+        dest="match_lines",
+        metavar="LINES",
+        help="Advanced matcher for response line count, separated by commas, support ranges",
+    )
+    advanced_filtering.add_option(
+        "--filter-lines",
+        "--fl",
+        action="store",
+        dest="filter_lines",
+        metavar="LINES",
+        help="Advanced filter for response line count, separated by commas, support ranges",
+    )
+    advanced_filtering.add_option(
+        "--match-regex",
+        "--mr",
+        action="store",
+        dest="match_regex",
+        metavar="REGEX",
+        help="Advanced matcher for response body regular expression",
+    )
+    advanced_filtering.add_option(
+        "--filter-regex",
+        "--fr",
+        action="store",
+        dest="filter_regex",
+        metavar="REGEX",
+        help="Advanced filter for response body regular expression",
+    )
+    advanced_filtering.add_option(
+        "--match-time",
+        "--mt",
+        action="store",
+        dest="match_time",
+        metavar="TIME",
+        help="Advanced matcher for elapsed milliseconds, e.g. >100 or <100",
+    )
+    advanced_filtering.add_option(
+        "--filter-time",
+        "--ft",
+        action="store",
+        dest="filter_time",
+        metavar="TIME",
+        help="Advanced filter for elapsed milliseconds, e.g. >100 or <100",
     )
 
     # Request Settings
@@ -614,6 +742,7 @@ def parse_arguments() -> Values:
     parser.add_option_group(mandatory)
     parser.add_option_group(dictionary)
     parser.add_option_group(general)
+    parser.add_option_group(advanced_filtering)
     parser.add_option_group(request)
     parser.add_option_group(connection)
     parser.add_option_group(advanced)

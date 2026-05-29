@@ -22,17 +22,73 @@ import re
 from lib.utils.common import lstrip_once
 
 
+_DYNAMIC_TOKEN_REGEXES = (
+    # UUIDs and long hex/base64-ish identifiers are common in soft-404 pages,
+    # CSRF tokens, build IDs, and request IDs.
+    re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", re.I),
+    re.compile(r"\b[0-9a-f]{16,}\b", re.I),
+    re.compile(r"\b[A-Za-z0-9+/]{24,}={0,2}\b"),
+    # Timestamps and high-cardinality numbers add noise without helping
+    # distinguish wildcard templates from real findings.
+    re.compile(r"\b\d{4}-\d{2}-\d{2}(?:[T ][0-9:.+-]+Z?)?\b"),
+    re.compile(r"\b\d{2}:\d{2}:\d{2}(?:\.\d+)?\b"),
+    re.compile(r"\b\d{6,}\b"),
+)
+
+_HTML_ATTRIBUTE_VALUE_REGEX = re.compile(
+    r"""(?i)\b(?:nonce|csrf|token|request[_-]?id|trace[_-]?id|session[_-]?id)=["'][^"']+["']"""
+)
+
+
+def normalize_dynamic_content(content: str) -> str:
+    """Return content with common volatile values replaced by stable markers."""
+
+    normalized = content
+    normalized = _HTML_ATTRIBUTE_VALUE_REGEX.sub("__DYNAMIC_ATTR__", normalized)
+
+    for regex in _DYNAMIC_TOKEN_REGEXES:
+        normalized = regex.sub("__DYNAMIC__", normalized)
+
+    return " ".join(normalized.split())
+
+
+def content_similarity(content1: str, content2: str) -> float:
+    """Return similarity after removing common dynamic values."""
+
+    return difflib.SequenceMatcher(
+        None,
+        normalize_dynamic_content(content1),
+        normalize_dynamic_content(content2),
+    ).ratio()
+
+
 class DynamicContentParser:
     def __init__(self, content1, content2):
         self._static_patterns = None
         self._differ = difflib.Differ()
-        self._is_static = content1 == content2
+        self._contents = [content1, content2]
         self._base_content = content1
+        self._is_static = False
 
-        if not self._is_static:
-            self._static_patterns = self.get_static_patterns(
-                self._differ.compare(content1.split(), content2.split())
-            )
+        self._recalculate()
+
+    @property
+    def static_patterns(self):
+        return self._static_patterns or []
+
+    @property
+    def is_ambiguous(self):
+        if self._is_static:
+            return False
+
+        return (
+            len(self.static_patterns) < 8
+            or self.similarity_to(self._contents[-1]) < 0.55
+        )
+
+    def add_sample(self, content):
+        self._contents.append(content)
+        self._recalculate()
 
     def compare_to(self, content):
         """
@@ -46,10 +102,13 @@ class DynamicContentParser:
         """
 
         if self._is_static:
-            return content == self._base_content
+            return (
+                content == self._base_content
+                or normalize_dynamic_content(content) == normalize_dynamic_content(self._base_content)
+            )
 
         i = -1
-        splitted_content = content.split()
+        splitted_content = normalize_dynamic_content(content).split()
         # Allow one miss, see https://github.com/maurosoria/dirsearch/issues/1279
         misses = 0
         for pattern in self._static_patterns:
@@ -63,9 +122,33 @@ class DynamicContentParser:
 
         # Static patterns doesn't seem to be a reliable enough method
         if len(content.split()) > len(self._base_content.split()) and len(self._static_patterns) < 20:
-            return difflib.SequenceMatcher(None, self._base_content, content).ratio() > 0.75
+            return self.similarity_to(content) > 0.75
 
         return True
+
+    def similarity_to(self, content):
+        return content_similarity(self._base_content, content)
+
+    def _recalculate(self):
+        self._is_static = all(content == self._base_content for content in self._contents)
+
+        if self._is_static:
+            self._static_patterns = []
+            return
+
+        first, second = (
+            normalize_dynamic_content(self._contents[0]),
+            normalize_dynamic_content(self._contents[1]),
+        )
+        patterns = self.get_static_patterns(
+            self._differ.compare(first.split(), second.split())
+        )
+
+        for content in self._contents[2:]:
+            normalized_words = normalize_dynamic_content(content).split()
+            patterns = [pattern for pattern in patterns if pattern in normalized_words]
+
+        self._static_patterns = patterns
 
     @staticmethod
     def get_static_patterns(patterns):

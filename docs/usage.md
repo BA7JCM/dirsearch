@@ -65,9 +65,11 @@ python3 dirsearch.py -e php,htm,js,bak,zip,tgz,txt -u https://target -t 20
 
 ## Asynchronous Mode
 
-Use `--async` to switch to asynchronous mode. In this mode, dirsearch uses coroutines instead of threads for concurrent requests.
+Asynchronous mode is the default runtime on Python 3.11 and newer. In this mode, dirsearch uses coroutines instead of threads for concurrent requests.
 
 Asynchronous mode can offer better performance and lower CPU usage because it avoids switching between thread contexts. Pressing `CTRL+C` also pauses progress immediately without waiting for threads to suspend.
+
+The synchronous Python stack and the native request backend remain available for compatibility and benchmarking. Use `--sync` to force the synchronous Python stack. Use `--request-backend native` to select the native backend; dirsearch will run that backend without async mode unless `--async` is explicitly supplied, which is rejected because the native backend has its own scheduler.
 
 ## Blacklists
 
@@ -78,6 +80,8 @@ For example, if you add `admin.php` to `db/403_blacklist.txt`, any `admin.php` r
 ## Filters
 
 Use `-i` / `--include-status` and `-x` / `--exclude-status` to include or exclude response status codes.
+
+dirsearch also performs automatic wildcard and soft-404 calibration. You normally do not need to tune this, but `--auto-calibration` forces extra calibration samples from the beginning when a target is especially noisy.
 
 ```sh
 python3 dirsearch.py -e php,html,js -u https://target --exclude-sizes 1B,243KB
@@ -97,6 +101,12 @@ python3 dirsearch.py -e php,html,js -u https://target --exclude-redirect "https:
 
 ```sh
 python3 dirsearch.py -e php,html,js -u https://target --exclude-response /error.html
+```
+
+Advanced ffuf/wfuzz-style filters are available as opt-in controls, not as the main discovery model. For example:
+
+```sh
+python3 dirsearch.py -u https://target --match-status 200-299 --filter-regex "not found"
 ```
 
 ## Raw Requests

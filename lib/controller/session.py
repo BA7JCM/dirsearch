@@ -37,6 +37,8 @@ class SessionStore:
         "exclude_status_codes",
         "exclude_sizes",
         "skip_on_status",
+        "match_status_codes",
+        "filter_status_codes",
     }
     SESSION_OPTION_TUPLE_KEYS = {
         "extensions",

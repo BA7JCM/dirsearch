@@ -18,11 +18,40 @@
 
 from unittest import TestCase
 
+from lib.connection.response import NativeResponse
+from lib.core.data import options
 from lib.core.scanner import BaseScanner
-from lib.core.settings import REFLECTED_PATH_MARKER
+from lib.core.settings import REFLECTED_PATH_MARKER, WILDCARD_TEST_POINT_MARKER
+
+
+class DynamicSoft404Requester:
+    def __init__(self):
+        self.count = 0
+
+    def request(self, path):
+        self.count += 1
+        body = (
+            f"Not found: {path}. "
+            f"Request id 550e8400-e29b-41d4-a716-{self.count:012d}. "
+            "Please check the URL and try again."
+        ).encode()
+        return NativeResponse(
+            f"https://example.com/{path}",
+            200,
+            [("content-type", "text/html")],
+            body,
+        )
 
 
 class TestScanner(TestCase):
+    def setUp(self):
+        self.original_options = dict(options)
+        options.update({"delay": 0, "auto_calibration": False})
+
+    def tearDown(self):
+        options.clear()
+        options.update(self.original_options)
+
     def test_generate_redirect_regex(self):
         self.assertEqual(
             BaseScanner.generate_redirect_regex(
@@ -34,3 +63,29 @@ class TestScanner(TestCase):
             rf"^http://example\.com/abc{REFLECTED_PATH_MARKER}/.*$",
             "Redirect regex generator gives unexpected result"
         )
+
+    def test_auto_calibration_filters_dynamic_soft_404(self):
+        from lib.core.scanner import Scanner
+
+        options["auto_calibration"] = True
+        requester = DynamicSoft404Requester()
+        scanner = Scanner(requester, path=WILDCARD_TEST_POINT_MARKER)
+        response = requester.request("admin")
+
+        self.assertGreater(scanner.sample_count, 2)
+        self.assertFalse(scanner.check("admin", response))
+
+    def test_dynamic_soft_404_does_not_hide_distinct_content(self):
+        from lib.core.scanner import Scanner
+
+        options["auto_calibration"] = True
+        requester = DynamicSoft404Requester()
+        scanner = Scanner(requester, path=WILDCARD_TEST_POINT_MARKER)
+        response = NativeResponse(
+            "https://example.com/admin",
+            200,
+            [("content-type", "text/html")],
+            b"Admin dashboard with unique controls and a stable login form.",
+        )
+
+        self.assertTrue(scanner.check("admin", response))

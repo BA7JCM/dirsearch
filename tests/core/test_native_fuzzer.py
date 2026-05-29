@@ -53,6 +53,21 @@ class TestNativeFuzzer(TestCase):
                 "prefixes": (),
                 "suffixes": (),
                 "extensions": (),
+                "matcher_mode": "or",
+                "filter_mode": "or",
+                "match_status_codes": set(),
+                "filter_status_codes": set(),
+                "match_sizes": (),
+                "filter_sizes": (),
+                "match_words": (),
+                "filter_words": (),
+                "match_lines": (),
+                "filter_lines": (),
+                "match_regex": None,
+                "filter_regex": None,
+                "match_time": (),
+                "filter_time": (),
+                "auto_calibration": False,
             }
         )
         blacklists.clear()
@@ -112,3 +127,27 @@ class TestNativeFuzzer(TestCase):
         self.assertEqual(matches, [])
         self.assertEqual(misses, [])
         self.assertEqual(errors, [error])
+
+    def test_native_fuzzer_routes_filtered_results_to_not_found_callbacks(self):
+        response = NativeResponse(
+            "https://example.com/missing",
+            404,
+            [("content-type", "text/plain")],
+            [],
+            length=64,
+            filtered=True,
+            filter_reason="advanced_filter",
+        )
+        backend = FakeNativeBackend([("missing", response, None)])
+        dictionary = DummyDictionary(["missing"])
+        matches = []
+        misses = []
+        errors = []
+
+        fuzzer = self.make_fuzzer(backend, dictionary, matches, misses, errors)
+        fuzzer.start()
+
+        self.assertEqual(matches, [])
+        self.assertEqual(misses, [response])
+        self.assertEqual(errors, [])
+        self.assertEqual(response.length, 64)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Iterator
+from typing import Any
 
 from lib.connection.response import NativeResponse
 from lib.core.data import options
@@ -37,6 +38,7 @@ class NativeHTTPBackend:
             max_retries=options["max_retries"],
             follow_redirects=options["follow_redirects"],
             max_body_size=MAX_RESPONSE_SIZE,
+            **self._filter_options(),
         )
 
         for path, quoted_path, result in zip(raw_paths, quoted_paths, results):
@@ -52,6 +54,32 @@ class NativeHTTPBackend:
                     result.headers,
                     result.body,
                     result.elapsed_ms / 1000,
+                    length=getattr(result, "length", None),
+                    filtered=getattr(result, "filtered", False),
+                    filter_reason=getattr(result, "filter_reason", None),
                 ),
                 None,
             )
+
+    @staticmethod
+    def _filter_options() -> dict[str, Any]:
+        return {
+            "include_status_codes": sorted(options["include_status_codes"]),
+            "exclude_status_codes": sorted(options["exclude_status_codes"]),
+            "minimum_response_size": options["minimum_response_size"],
+            "maximum_response_size": options["maximum_response_size"],
+            "matcher_mode": options["matcher_mode"],
+            "filter_mode": options["filter_mode"],
+            "match_status_codes": sorted(options["match_status_codes"]),
+            "filter_status_codes": sorted(options["filter_status_codes"]),
+            "match_sizes": list(options["match_sizes"]),
+            "filter_sizes": list(options["filter_sizes"]),
+            "match_words": list(options["match_words"]),
+            "filter_words": list(options["filter_words"]),
+            "match_lines": list(options["match_lines"]),
+            "filter_lines": list(options["filter_lines"]),
+            "match_regex": options["match_regex"],
+            "filter_regex": options["filter_regex"],
+            "match_time": list(options["match_time"]),
+            "filter_time": list(options["filter_time"]),
+        }
