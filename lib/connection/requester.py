@@ -118,6 +118,47 @@ def _find_ssl_error(exc: Exception) -> ssl.SSLError | None:
     return None
 
 
+def _is_timeout_error(exc: Exception) -> bool:
+    for current in _iter_exception_chain(exc):
+        if isinstance(
+            current,
+            (
+                requests.exceptions.Timeout,
+                urllib3.exceptions.TimeoutError,
+                socket.timeout,
+            ),
+        ):
+            return True
+
+        message = str(current).lower()
+        if "timed out" in message or "timeout" in message:
+            return True
+
+    return False
+
+
+def _is_response_read_error(exc: Exception) -> bool:
+    for current in _iter_exception_chain(exc):
+        if isinstance(
+            current,
+            (
+                requests.exceptions.ChunkedEncodingError,
+                requests.exceptions.ContentDecodingError,
+                requests.exceptions.StreamConsumedError,
+                requests.exceptions.UnrewindableBodyError,
+                httpx.DecodingError,
+                httpx.ReadError,
+                httpx.RemoteProtocolError,
+            ),
+        ):
+            return True
+
+        if re.search(READ_RESPONSE_ERROR_REGEX, type(current).__name__):
+            return True
+
+    return False
+
+
 def _is_ssl_error(exc: Exception) -> bool:
     return isinstance(exc, requests.exceptions.SSLError) or _find_ssl_error(exc) is not None
 
@@ -359,7 +400,7 @@ class Requester(BaseRequester):
                     err_msg = "Couldn't resolve DNS"
                 elif _is_ssl_error(e):
                     err_msg = _format_ssl_error(e, url)
-                elif "TooManyRedirects" in str(e):
+                elif isinstance(e, requests.exceptions.TooManyRedirects):
                     err_msg = f"Too many redirects: {url}"
                 elif "ProxyError" in str(e):
                     if proxy:
@@ -373,14 +414,13 @@ class Requester(BaseRequester):
                     err_msg = f"Invalid URL: {url}"
                 elif "InvalidProxyURL" in str(e):
                     err_msg = f"Invalid proxy URL: {proxy}"
+                elif _is_timeout_error(e):
+                    err_msg = f"Request timeout: {url}"
+                elif _is_response_read_error(e):
+                    err_msg = f"Failed to read response body: {url}"
                 elif "ConnectionError" in str(e):
                     err_msg = f"Cannot connect to: {urlparse(url).netloc}"
-                elif re.search(READ_RESPONSE_ERROR_REGEX, str(e)):
-                    err_msg = f"Failed to read response body: {url}"
-                elif "Timeout" in str(e) or e in (
-                    http.client.IncompleteRead,
-                    socket.timeout,
-                ):
+                elif isinstance(e, http.client.IncompleteRead):
                     err_msg = f"Request timeout: {url}"
                 else:
                     err_msg = f"There was a problem in the request to: {url}"
@@ -547,7 +587,7 @@ class AsyncRequester(BaseRequester):
                     err_msg = f"Invalid URL: {url}"
                 elif isinstance(e, httpx.TimeoutException):
                     err_msg = f"Request timeout: {url}"
-                elif isinstance(e, httpx.ReadError) or isinstance(e, httpx.DecodingError):  # not sure
+                elif _is_response_read_error(e):
                     err_msg = f"Failed to read response body: {url}"
                 else:
                     err_msg = f"There was a problem in the request to: {url}"

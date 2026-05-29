@@ -58,7 +58,13 @@ class BaseResponse:
     @property
     def length(self) -> int:
         if cl := self.headers.get("content-length"):
-            return int(cl)
+            try:
+                length = int(cl)
+            except (TypeError, ValueError):
+                return len(self.body)
+
+            if length >= 0:
+                return length
 
         return len(self.body)
 
@@ -95,10 +101,10 @@ class Response(BaseResponse):
         if not is_binary(self.body):
             try:
                 self.content = self.body.decode(
-                    response.encoding or DEFAULT_ENCODING, errors="ignore"
+                    response.encoding or DEFAULT_ENCODING, errors="replace"
                 )
             except LookupError:
-                self.content = self.body.decode(DEFAULT_ENCODING, errors="ignore")
+                self.content = self.body.decode(DEFAULT_ENCODING, errors="replace")
 
 
 class AsyncResponse(BaseResponse):
@@ -116,9 +122,35 @@ class AsyncResponse(BaseResponse):
         if not is_binary(self.body):
             try:
                 self.content = self.body.decode(
-                    response.encoding or DEFAULT_ENCODING, errors="ignore"
+                    response.encoding or DEFAULT_ENCODING, errors="replace"
                 )
             except LookupError:
-                self.content = self.body.decode(DEFAULT_ENCODING, errors="ignore")
+                self.content = self.body.decode(DEFAULT_ENCODING, errors="replace")
 
         return self
+
+
+class NativeResponse(BaseResponse):
+    def __init__(
+        self,
+        url: str,
+        status: int,
+        headers: list[tuple[str, str]],
+        body: bytes | bytearray | list[int],
+        elapsed: float = 0.0,
+    ) -> None:
+        response = type(
+            "NativeHTTPResponse",
+            (),
+            {
+                "status_code": status,
+                "headers": {key.lower(): value for key, value in headers},
+                "history": [],
+                "encoding": None,
+            },
+        )()
+        super().__init__(url, response, elapsed)
+
+        self.body = bytes(body)
+        if not is_binary(self.body):
+            self.content = self.body.decode(DEFAULT_ENCODING, errors="replace")

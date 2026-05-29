@@ -17,8 +17,13 @@ Use 4-space indentation and keep Python code straightforward and modular. Prefer
 ## Testing Guidelines
 Tests use `unittest`. Add new coverage under `tests/` with filenames like `test_requester.py` and methods named `test_*`. When changing request, packaging, or report behavior, add message-level or artifact-level assertions rather than only smoke checks. For compatibility-sensitive changes, prefer Docker validation on supported Python versions.
 
+## Native Backend Benchmark Results
+Phase 5 native request-backend benchmark results are summarized in `docs/native-backend-benchmarks.md`. Do not commit raw benchmark JSON or temporary benchmark runner scripts unless they are explicitly needed for a reproducible regression investigation.
+
+When reporting benchmark results, lead with medians and include best samples only as secondary context. Distinguish direct HTTP client numbers from full `dirsearch` contention numbers because the full scan includes fuzzer, callbacks, filters, process overhead, and scheduler effects. Treat runtime worker count and HTTP in-flight concurrency as separate knobs: runtime workers should follow CPU count, while HTTP concurrency may be higher for I/O-bound scans.
+
 ## Commit & Pull Request Guidelines
 Recent history favors short imperative commits such as `Fix async SSL classification and add tests` or `Use PyInstaller spec in GitHub workflows`. Keep commits scoped to one change. PRs should explain the user-visible effect, link the issue when applicable, and list the commands you ran. Update docs or workflow files when changing CLI flags, packaging, or bundled artifacts.
 
 ## Security & Configuration Tips
-Do not commit secrets, session artifacts, or local virtualenv files. If you change dependencies, keep `requirements.txt`, `requirements/runtime.txt`, and packaging metadata aligned. If you add runtime files or imports, verify both `pyinstaller/dirsearch.spec` and GitHub Actions workflows still bundle them.
+Do not commit secrets, session artifacts, local virtualenv files, or cloud benchmark artifacts. DigitalOcean tokens must stay in environment variables such as `DIGITALOCEAN_ACCESS_TOKEN`; never write them into scripts, result files, or docs. If you change dependencies, keep `requirements.txt`, `requirements/runtime.txt`, and packaging metadata aligned. If you add runtime files or imports, verify both `pyinstaller/dirsearch.spec` and GitHub Actions workflows still bundle them.
