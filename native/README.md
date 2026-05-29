@@ -15,11 +15,8 @@ python3 -m pip install maturin
 python3 -m maturin develop --manifest-path native/Cargo.toml
 ```
 
-Then compare native and Python paths:
-
-```sh
-python3 scripts/benchmark_phase5.py --include-native --json
-```
+The benchmark summary for this backend is in
+[`docs/native-backend-benchmarks.md`](../docs/native-backend-benchmarks.md).
 
 You can use the native scan path in dirsearch with supported GET scans:
 
