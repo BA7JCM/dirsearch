@@ -29,13 +29,12 @@ from lib.core.data import options
 from lib.core.logger import logger
 from lib.core.settings import (
     REFLECTED_PATH_MARKER,
-    TEST_PATH_LENGTH,
     WILDCARD_TEST_POINT_MARKER,
 )
 from lib.parse.url import clean_path
 from lib.utils.common import replace_path
 from lib.utils.diff import DynamicContentParser, generate_matching_regex
-from lib.utils.random import rand_string
+from lib.utils.random import rand_stealth_word
 
 
 class BaseScanner:
@@ -146,7 +145,7 @@ class Scanner(BaseScanner):
 
         first_path = self.path.replace(
             WILDCARD_TEST_POINT_MARKER,
-            rand_string(TEST_PATH_LENGTH),
+            rand_stealth_word(),
         )
         first_response = self.requester.request(first_path)
         self.response = first_response
@@ -161,7 +160,7 @@ class Scanner(BaseScanner):
 
         second_path = self.path.replace(
             WILDCARD_TEST_POINT_MARKER,
-            rand_string(TEST_PATH_LENGTH, omit=first_path),
+            rand_stealth_word(omit=first_path),
         )
         second_response = self.requester.request(second_path)
         time.sleep(options["delay"])
@@ -216,7 +215,7 @@ class AsyncScanner(BaseScanner):
 
         first_path = self.path.replace(
             WILDCARD_TEST_POINT_MARKER,
-            rand_string(TEST_PATH_LENGTH),
+            rand_stealth_word(),
         )
         first_response = await self.requester.request(first_path)
         self.response = first_response
@@ -232,7 +231,7 @@ class AsyncScanner(BaseScanner):
 
         second_path = self.path.replace(
             WILDCARD_TEST_POINT_MARKER,
-            rand_string(TEST_PATH_LENGTH, omit=first_path),
+            rand_stealth_word(omit=first_path),
         )
         second_response = await self.requester.request(second_path)
         await asyncio.sleep(options["delay"])
