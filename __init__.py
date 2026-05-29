@@ -3,7 +3,7 @@ import os
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from .lib.core.api import (
+from .lib.core.api import (  # noqa: E402
     DirsearchFuzzer,
     FuzzerConfig,
     FuzzerResult,

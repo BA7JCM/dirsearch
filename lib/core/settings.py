@@ -129,6 +129,7 @@ DEFAULT_HEADERS = {
     "cache-control": "max-age=0",
 }
 
+
 def _get_default_session_dir() -> str:
     if getattr(sys, "frozen", False) or hasattr(sys, "_MEIPASS"):
         home_dir = os.path.expanduser("~")

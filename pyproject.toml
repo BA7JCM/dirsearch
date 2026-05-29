@@ -61,7 +61,8 @@ db = [
 Homepage = "https://github.com/maurosoria/dirsearch"
 
 [tool.codespell]
-skip = ".git,./db/dicc.txt,./static"
+skip = ".git,./db/categories/*,./db/dicc.txt,./static"
+ignore-words-list = "datas"
 
 [tool.flake8]
 count = true
