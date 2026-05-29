@@ -4,7 +4,9 @@ use pyo3::prelude::*;
 use rayon::prelude::*;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use std::fs;
-use std::time::Instant;
+use std::io::{Read, Write};
+use std::net::TcpStream;
+use std::time::{Duration, Instant};
 
 #[pyclass]
 struct NativeHttpResult {
@@ -154,6 +156,7 @@ fn scan_http(
             .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
 
         runtime.block_on(async move {
+            let raw_headers = headers.clone();
             let mut header_map = HeaderMap::new();
             for (name, value) in headers {
                 let name = HeaderName::from_bytes(name.as_bytes())
@@ -182,6 +185,7 @@ fn scan_http(
             for path in paths {
                 let client = client.clone();
                 let base_url = base_url.clone();
+                let raw_headers = raw_headers.clone();
                 let semaphore = semaphore.clone();
                 tasks.push(tokio::spawn(async move {
                     let _permit = match semaphore.acquire_owned().await {
@@ -200,6 +204,36 @@ fn scan_http(
                     };
                     let url = format!("{base_url}{path}");
                     let start = Instant::now();
+
+                    if should_use_raw_http(&base_url, &path) {
+                        let raw_base_url = base_url.clone();
+                        let raw_path = path.clone();
+                        let raw_result = tokio::task::spawn_blocking(move || {
+                            raw_http_get(
+                                &raw_base_url,
+                                raw_path,
+                                &raw_headers,
+                                timeout_secs,
+                                max_body_size,
+                                start,
+                            )
+                        })
+                        .await;
+
+                        return match raw_result {
+                            Ok(result) => result,
+                            Err(error) => NativeHttpResult {
+                                path,
+                                status: 0,
+                                length: 0,
+                                elapsed_ms: start.elapsed().as_secs_f64() * 1000.0,
+                                error: Some(error.to_string()),
+                                headers: Vec::new(),
+                                body: Vec::new(),
+                            },
+                        };
+                    }
+
                     let mut response = None;
                     let mut last_error = None;
                     for _ in 0..=max_retries {
@@ -275,6 +309,140 @@ fn scan_http(
             Ok(results)
         })
     })
+}
+
+fn should_use_raw_http(base_url: &str, path: &str) -> bool {
+    base_url.starts_with("http://")
+        && path
+            .split(['/', '?', '#'])
+            .any(|segment| segment == "." || segment == "..")
+}
+
+fn raw_http_get(
+    base_url: &str,
+    path: String,
+    headers: &[(String, String)],
+    timeout_secs: f64,
+    max_body_size: usize,
+    start: Instant,
+) -> NativeHttpResult {
+    match raw_http_get_inner(base_url, &path, headers, timeout_secs, max_body_size) {
+        Ok((status, headers, body, length)) => NativeHttpResult {
+            path,
+            status,
+            length,
+            elapsed_ms: start.elapsed().as_secs_f64() * 1000.0,
+            error: None,
+            headers,
+            body,
+        },
+        Err(error) => NativeHttpResult {
+            path,
+            status: 0,
+            length: 0,
+            elapsed_ms: start.elapsed().as_secs_f64() * 1000.0,
+            error: Some(error),
+            headers: Vec::new(),
+            body: Vec::new(),
+        },
+    }
+}
+
+fn raw_http_get_inner(
+    base_url: &str,
+    path: &str,
+    headers: &[(String, String)],
+    timeout_secs: f64,
+    max_body_size: usize,
+) -> Result<(u16, Vec<(String, String)>, Vec<u8>, usize), String> {
+    let url = reqwest::Url::parse(base_url).map_err(|error| error.to_string())?;
+    if url.scheme() != "http" {
+        return Err("Raw HTTP path preservation only supports http:// URLs".to_string());
+    }
+
+    let host = url
+        .host_str()
+        .ok_or_else(|| "URL is missing a host".to_string())?
+        .to_string();
+    let port = url
+        .port_or_known_default()
+        .ok_or_else(|| "URL is missing a port".to_string())?;
+    let host_header = match url.port() {
+        Some(port) => format!("{host}:{port}"),
+        None => host.clone(),
+    };
+    let timeout = Duration::from_secs_f64(timeout_secs);
+    let mut stream =
+        TcpStream::connect((host.as_str(), port)).map_err(|error| error.to_string())?;
+    stream
+        .set_read_timeout(Some(timeout))
+        .map_err(|error| error.to_string())?;
+    stream
+        .set_write_timeout(Some(timeout))
+        .map_err(|error| error.to_string())?;
+
+    let target = raw_request_target(url.path(), path);
+    let mut request =
+        format!("GET {target} HTTP/1.1\r\nHost: {host_header}\r\nConnection: close\r\n");
+    for (name, value) in headers {
+        request.push_str(name);
+        request.push_str(": ");
+        request.push_str(value);
+        request.push_str("\r\n");
+    }
+    request.push_str("\r\n");
+    stream
+        .write_all(request.as_bytes())
+        .map_err(|error| error.to_string())?;
+
+    let mut raw_response = Vec::new();
+    stream
+        .read_to_end(&mut raw_response)
+        .map_err(|error| error.to_string())?;
+    parse_raw_http_response(raw_response, max_body_size)
+}
+
+fn raw_request_target(base_path: &str, path: &str) -> String {
+    let mut target = if base_path == "/" {
+        "/".to_string()
+    } else {
+        base_path.trim_end_matches('/').to_string() + "/"
+    };
+    target.push_str(path.trim_start_matches('/'));
+    target
+}
+
+fn parse_raw_http_response(
+    raw_response: Vec<u8>,
+    max_body_size: usize,
+) -> Result<(u16, Vec<(String, String)>, Vec<u8>, usize), String> {
+    let header_end = raw_response
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .ok_or_else(|| "HTTP response did not contain a header terminator".to_string())?;
+    let header_bytes = &raw_response[..header_end];
+    let body_start = header_end + 4;
+    let body_bytes = &raw_response[body_start..];
+    let header_text = String::from_utf8_lossy(header_bytes);
+    let mut lines = header_text.split("\r\n");
+    let status_line = lines
+        .next()
+        .ok_or_else(|| "HTTP response did not contain a status line".to_string())?;
+    let status = status_line
+        .split_whitespace()
+        .nth(1)
+        .ok_or_else(|| "HTTP response status line did not contain a status code".to_string())?
+        .parse::<u16>()
+        .map_err(|error| error.to_string())?;
+    let headers = lines
+        .filter_map(|line| {
+            line.split_once(':')
+                .map(|(name, value)| (name.to_string(), value.trim_start().to_string()))
+        })
+        .collect::<Vec<_>>();
+    let length = body_bytes.len();
+    let body = body_bytes[..length.min(max_body_size)].to_vec();
+    Ok((status, headers, body, length))
 }
 
 fn read_lines(path: &str) -> PyResult<Vec<String>> {

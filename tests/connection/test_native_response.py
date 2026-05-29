@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+
 from unittest import TestCase
 
 from lib.connection.response import NativeResponse
@@ -29,3 +31,52 @@ class TestNativeResponse(TestCase):
         )
 
         self.assertEqual(response.redirect, "/login")
+
+    def test_native_cjk_length_uses_network_bytes(self):
+        body = "测试".encode()
+        response = NativeResponse(
+            "https://example.com/admin/%E6%B5%8B%E8%AF%95",
+            200,
+            [("Content-Length", str(len(body)))],
+            body,
+        )
+
+        self.assertEqual(response.content, "测试")
+        self.assertEqual(len(response.content), 2)
+        self.assertEqual(response.length, 6)
+
+    def test_native_case_expansion_length_uses_network_bytes(self):
+        body = "/TEST-STRASSE".encode()
+        response = NativeResponse(
+            "https://example.com/test-stra%C3%9Fe",
+            200,
+            [("Content-Length", str(len(body)))],
+            body,
+        )
+
+        self.assertEqual(response.content, "/TEST-STRASSE")
+        self.assertEqual(response.length, len(body))
+
+    def test_native_invalid_utf8_uses_replacement_decoding(self):
+        response = NativeResponse(
+            "https://example.com/admin",
+            200,
+            [("Content-Type", "text/html; charset=utf-8")],
+            b"start\x96end",
+        )
+
+        self.assertEqual(response.body, b"start\x96end")
+        self.assertEqual(response.content, "start�end")
+        self.assertEqual(response.length, len(response.body))
+
+    def test_native_utf16_bom_artifact_body_does_not_raise_decode_error(self):
+        response = NativeResponse(
+            "https://example.com/%FF%FEadmin",
+            200,
+            [],
+            b"\xff\xfeadmin",
+        )
+
+        self.assertEqual(response.body, b"\xff\xfeadmin")
+        self.assertEqual(response.content, "��admin")
+        self.assertEqual(response.length, len(response.body))

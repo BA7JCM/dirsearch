@@ -18,11 +18,29 @@
 
 import sys
 import shutil
+import unicodedata
 
 from lib.core.data import options
 from lib.core.decorators import locked
 from lib.core.settings import IS_WINDOWS
 from lib.view.colors import set_color, clean_color, disable_color
+
+
+MAX_DISPLAY_TEXT_LENGTH = 240
+
+
+def safe_display_text(value, max_length=MAX_DISPLAY_TEXT_LENGTH):
+    text = str(value)
+    text = "".join(
+        character
+        for character in text
+        if not unicodedata.category(character).startswith("C")
+    )
+
+    if len(text) > max_length:
+        return text[:max_length - 3] + "..."
+
+    return text
 
 if IS_WINDOWS:
     from colorama.win32 import (
@@ -86,7 +104,7 @@ class CLI:
             self.buffer += "\n"
 
     def status_report(self, response, full_url):
-        target = response.url if full_url else "/" + response.full_path
+        target = safe_display_text(response.url if full_url else "/" + response.full_path)
         # Get time from datetime string
         time = response.datetime.split()[1]
         message = f"[{time}] {response.status} - {response.size.rjust(6, ' ')} - {target}"
@@ -110,10 +128,10 @@ class CLI:
             message = set_color(message, fore="magenta")
 
         if response.redirect:
-            message += f"  ->  {response.redirect}"
+            message += f"  ->  {safe_display_text(response.redirect)}"
 
         for redirect in response.history:
-            message += f"\n-->  {redirect}"
+            message += f"\n-->  {safe_display_text(redirect)}"
 
         self.new_line(message)
 
@@ -141,7 +159,9 @@ class CLI:
 
     def new_directories(self, directories):
         message = set_color(
-            f"Added to the queue: {', '.join(directories)}", fore="yellow", style="dim"
+            f"Added to the queue: {safe_display_text(', '.join(directories))}",
+            fore="yellow",
+            style="dim",
         )
         self.new_line(message)
 
