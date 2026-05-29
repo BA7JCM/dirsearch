@@ -88,7 +88,7 @@ setuptools.setup(
     name="dirsearch",
     description="Advanced web path scanner",
     version=read_version(ROOT / "lib/core/settings.py"),
-    python_requires=">=3.9",
+    python_requires=">=3.11",
     classifiers=[
         "Programming Language :: Python",
         "Environment :: Console",
@@ -96,8 +96,6 @@ setuptools.setup(
         "License :: OSI Approved :: GNU General Public License v2 (GPLv2)",
         "Operating System :: OS Independent",
         "Topic :: Security",
-        "Programming Language :: Python :: 3.9",
-        "Programming Language :: Python :: 3.10",
         "Programming Language :: Python :: 3.11",
         "Programming Language :: Python :: 3.12",
         "Programming Language :: Python :: 3.13",

@@ -20,7 +20,7 @@ Join the [Discord server](https://discord.gg/2N22ZdAJRj) to communicate with the
 
 ## Quick Start
 
-dirsearch requires Python 3.9 or higher.
+dirsearch requires Python 3.11 or higher.
 
 ```sh
 git clone https://github.com/maurosoria/dirsearch.git --depth 1
