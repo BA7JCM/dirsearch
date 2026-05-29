@@ -29,6 +29,7 @@ def main() -> None:
         FuzzerConfig,
         FuzzerResult,
         Wordlist,
+        WordlistLimitError,
         WordlistState,
         WordlistTemplate,
     )
@@ -41,6 +42,7 @@ def main() -> None:
     assert FuzzerConfig
     assert FuzzerResult
     assert Wordlist
+    assert WordlistLimitError
     assert WordlistState
     assert WordlistTemplate
 

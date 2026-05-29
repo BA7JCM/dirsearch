@@ -6,7 +6,7 @@ You can build standalone executables using PyInstaller. This creates a single bi
 
 Requirements:
 
-- Python 3.9-3.14
+- Python 3.11-3.14
 - PyInstaller 6.20.0+
 - Dependencies from `requirements.txt` and `requirements/db.txt`
 
@@ -80,7 +80,7 @@ dirsearch uses GitHub Actions for continuous integration and automated builds.
 
 | Workflow | Trigger | Description |
 |----------|---------|-------------|
-| Inspection (CI) | Push, PR | Runs tests, linting, and codespell on Python 3.9/3.11/3.14 across Ubuntu and Windows |
+| Inspection (CI) | Push, PR | Runs tests, linting, and codespell on Python 3.11/3.14 across Ubuntu and Windows |
 | PyInstaller Linux | Manual, Workflow call | Builds `dirsearch-linux-amd64` binary |
 | PyInstaller Windows | Manual, Workflow call | Builds `dirsearch-windows-x64.exe` binary |
 | PyInstaller macOS Intel | Manual, Workflow call | Builds `dirsearch-macos-intel` binary |
@@ -113,5 +113,5 @@ To create a release with all platform binaries:
 
 The CI workflow tests on:
 
-- Python versions: 3.9, 3.11, 3.14
+- Python versions: 3.11, 3.14
 - Operating systems: Ubuntu latest and Windows latest

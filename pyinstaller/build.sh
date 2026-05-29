@@ -47,11 +47,16 @@ build() {
 
     # Check for Python
     if ! command -v python3 &> /dev/null && ! command -v python &> /dev/null; then
-        log_error "Python 3 is required"
+        log_error "Python 3.11 or newer is required"
         exit 1
     fi
 
     PYTHON_CMD=$(command -v python3 || command -v python)
+
+    if ! $PYTHON_CMD -c 'import sys; raise SystemExit(sys.version_info < (3, 11))'; then
+        log_error "Python 3.11 or newer is required"
+        exit 1
+    fi
 
     # Install dependencies
     log_info "Installing dependencies..."

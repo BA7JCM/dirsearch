@@ -6,16 +6,16 @@ dirsearch runs on multiple platforms and can be used either via Python or standa
 
 | Platform | Python | Standalone Binary |
 |----------|--------|-------------------|
-| Linux (x86_64) | Python 3.9-3.14 | `dirsearch-linux-amd64` |
-| Windows (x64) | Python 3.9-3.14 | `dirsearch-windows-x64.exe` |
-| macOS (Intel) | Python 3.9-3.14 | `dirsearch-macos-intel` |
-| macOS (Apple Silicon) | Python 3.9-3.14 | `dirsearch-macos-silicon` |
+| Linux (x86_64) | Python 3.11-3.14 | `dirsearch-linux-amd64` |
+| Windows (x64) | Python 3.11-3.14 | `dirsearch-windows-x64.exe` |
+| macOS (Intel) | Python 3.11-3.14 | `dirsearch-macos-intel` |
+| macOS (Apple Silicon) | Python 3.11-3.14 | `dirsearch-macos-silicon` |
 
 Standalone binaries are self-contained executables that do not require a Python installation.
 
 ## Install from Source
 
-Requirement: Python 3.9 or higher.
+Requirement: Python 3.11 or higher.
 
 ```sh
 git clone https://github.com/maurosoria/dirsearch.git --depth 1

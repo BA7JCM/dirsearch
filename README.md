@@ -20,7 +20,7 @@ Join the [Discord server](https://discord.gg/2N22ZdAJRj) to communicate with the
 
 ## Quick Start
 
-dirsearch requires Python 3.9 or higher.
+dirsearch requires Python 3.11 or higher.
 
 ```sh
 git clone https://github.com/maurosoria/dirsearch.git --depth 1
@@ -64,23 +64,13 @@ Use `python3 dirsearch.py -h` for the full CLI help.
 
 ## Python API
 
-```python
-from dirsearch import DirsearchFuzzer, FuzzerConfig, WordlistTemplate
+dirsearch can also be used from Python code for local automation, MCP servers,
+REST wrappers, and agent-controlled scans. The importable API keeps its
+configuration in `FuzzerConfig`, so callers do not need to parse CLI flags or
+mutate CLI globals.
 
-template = WordlistTemplate(
-    ["%SUBJECT%.%EXT%"],
-    placeholders={"SUBJECT": ["admin", "login"]},
-)
-config = FuzzerConfig(
-    url="https://example.com",
-    wordlist=template,
-    extensions=("php",),
-)
-
-results = DirsearchFuzzer(config).run()
-```
-
-See [Python API](docs/python-api.md) for more detail.
+See [Python API](docs/python-api.md) for examples covering templates, custom
+wordlists, callbacks, authenticated sessions, and agent-oriented scan recipes.
 
 ## Contributing
 

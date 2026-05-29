@@ -26,6 +26,14 @@ from lib.core.settings import IS_WINDOWS
 from lib.view.colors import set_color, clean_color, disable_color
 
 
+if IS_WINDOWS:
+    from colorama.win32 import (
+        FillConsoleOutputCharacter,
+        GetConsoleScreenBufferInfo,
+        STDOUT,
+    )
+
+
 MAX_DISPLAY_TEXT_LENGTH = 240
 
 
@@ -41,13 +49,6 @@ def safe_display_text(value, max_length=MAX_DISPLAY_TEXT_LENGTH):
         return text[:max_length - 3] + "..."
 
     return text
-
-if IS_WINDOWS:
-    from colorama.win32 import (
-        FillConsoleOutputCharacter,
-        GetConsoleScreenBufferInfo,
-        STDOUT,
-    )
 
 
 class CLI:

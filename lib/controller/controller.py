@@ -259,7 +259,6 @@ class Controller:
         session_store = SessionStore(options)
         session_store.save(self, session_file, last_output)
 
-
     def setup(self) -> None:
         blacklists.update(get_blacklists())
 
