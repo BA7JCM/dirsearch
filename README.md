@@ -28,13 +28,6 @@ cd dirsearch
 python3 dirsearch.py -u https://example.com -e php,html,js
 ```
 
-You can also install it from PyPI:
-
-```sh
-pip3 install dirsearch
-dirsearch -u https://example.com -e php,html,js
-```
-
 Pre-built PyInstaller binaries and portable folder archives are available on the [Releases page](https://github.com/maurosoria/dirsearch/releases).
 
 ## Documentation
