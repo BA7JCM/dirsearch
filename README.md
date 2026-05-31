@@ -28,6 +28,15 @@ cd dirsearch
 python3 dirsearch.py -u https://example.com -e php,html,js
 ```
 
+You can also install the latest Python stack directly from GitHub with pip:
+
+```sh
+pip3 install git+https://github.com/maurosoria/dirsearch.git
+dirsearch -u https://example.com -e php,html,js
+```
+
+The Rust native backend is opt-in for source installs; see [Installation](docs/installation.md) for the native build steps.
+
 Pre-built PyInstaller binaries and portable folder archives are available on the [Releases page](https://github.com/maurosoria/dirsearch/releases).
 
 ## Documentation

@@ -56,10 +56,7 @@ jobs:
         run: |
           rustup default stable
           python -m pip install --only-binary=:all: maturin
-          mkdir -p dist/native-wheels
-          python -m maturin build --release --manifest-path native/Cargo.toml --out dist/native-wheels
-          python -m pip install dist/native-wheels/*.whl
-          python -c "import dirsearch_native"
+          python scripts/build_native.py --out dist/native-wheels
 
       - name: Build macOS Intel binary
         run: python -m PyInstaller --clean pyinstaller/dirsearch.spec

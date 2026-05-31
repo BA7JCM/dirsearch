@@ -16,9 +16,7 @@ RUN python -m pip install --upgrade pip setuptools wheel \
         && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal \
         && . "$HOME/.cargo/env" \
         && python -m pip install --only-binary=:all: maturin \
-        && python -m maturin build --release --manifest-path native/Cargo.toml --out dist/native-wheels \
-        && python -m pip install dist/native-wheels/*.whl \
-        && python -c "import dirsearch_native" \
+        && python scripts/build_native.py --out dist/native-wheels \
         && python -m pip uninstall -y maturin \
         && rm -rf dist/native-wheels native/target "$HOME/.cargo" "$HOME/.rustup" \
         && apt-get purge -y --auto-remove build-essential curl \
