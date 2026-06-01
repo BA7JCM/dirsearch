@@ -25,6 +25,13 @@ from lib.utils import safe_xml
 
 class MimeTypeUtils:
     @staticmethod
+    def to_text(content):
+        if isinstance(content, bytes):
+            return content.decode("utf-8", errors="replace")
+
+        return content
+
+    @staticmethod
     def is_json(content):
         try:
             json.loads(content)
@@ -42,6 +49,7 @@ class MimeTypeUtils:
 
     @staticmethod
     def is_query_string(content):
+        content = MimeTypeUtils.to_text(content)
         if re.match(QUERY_STRING_REGEX, content):
             return True
 

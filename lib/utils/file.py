@@ -102,6 +102,11 @@ class FileUtils:
     def read(file_name):
         return open(file_name, "r").read()
 
+    @staticmethod
+    def read_bytes(file_name):
+        with open(file_name, "rb") as fd:
+            return fd.read()
+
     @classmethod
     def get_files(cls, directory):
         files = []

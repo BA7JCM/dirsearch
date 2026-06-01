@@ -333,6 +333,15 @@ class TestRequesterPathPreservation(BaseRequesterTestCase):
                 [expected for _, _, expected in REQUEST_TARGET_CASES],
             )
 
+    def test_sync_requester_appends_base_query(self):
+        with RequestTargetServer() as server:
+            requester = Requester()
+            requester.set_url(server.url)
+            requester.set_query("debug=true")
+            requester.request("admin")
+
+            self.assertEqual(server.targets, [b"/admin?debug=true"])
+
 
 class TestAsyncRequesterSSLHandling(BaseRequesterTestCase, IsolatedAsyncioTestCase):
     async def test_async_connect_error_with_ssl_cause_uses_ssl_message(self):
@@ -432,6 +441,18 @@ class TestAsyncRequesterPathPreservation(BaseRequesterTestCase, IsolatedAsyncioT
                 [expected for _, _, expected in REQUEST_TARGET_CASES],
             )
 
+    async def test_async_requester_appends_base_query(self):
+        with RequestTargetServer() as server:
+            requester = AsyncRequester()
+            requester.set_url(server.url)
+            requester.set_query("debug=true")
+            try:
+                await requester.request("admin")
+            finally:
+                await requester.session.aclose()
+
+            self.assertEqual(server.targets, [b"/admin?debug=true"])
+
 
 class TestNativeRequesterPathPreservation(BaseRequesterTestCase):
     def test_native_requester_preserves_encoded_edge_case_targets(self):
@@ -453,3 +474,15 @@ class TestNativeRequesterPathPreservation(BaseRequesterTestCase):
                 [normalize_percent_hex(target) for target in server.targets],
                 [expected for _, _, expected in REQUEST_TARGET_CASES],
             )
+
+    def test_native_requester_appends_base_query(self):
+        try:
+            backend = NativeHTTPBackend()
+        except RequestException as error:
+            self.skipTest(str(error))
+
+        with RequestTargetServer() as server:
+            results = list(backend.scan(server.url, ["admin"], "debug=true"))
+
+            self.assertEqual([error for _, _, error in results], [None])
+            self.assertEqual(server.targets, [b"/admin?debug=true"])

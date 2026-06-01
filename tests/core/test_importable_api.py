@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from tempfile import TemporaryDirectory
 import threading
 from unittest import TestCase
 
@@ -17,6 +19,7 @@ class APITestHandler(BaseHTTPRequestHandler):
     }
 
     def do_GET(self):
+        self.server.seen.append((self.command, self.path, dict(self.headers), b""))
         if self.path == "/agent-only":
             status, body = (
                 (200, b"agent")
@@ -37,6 +40,26 @@ class APITestHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def do_POST(self):
+        content_length = int(self.headers.get("content-length", 0))
+        request_body = self.rfile.read(content_length)
+        self.server.seen.append((self.command, self.path, dict(self.headers), request_body))
+
+        status, body = (
+            (200, b"raw")
+            if (
+                self.path == "/submit/probe?debug=true"
+                and self.headers.get("x-raw") == "yes"
+                and request_body == b"payload-\xff"
+            )
+            else (404, b"missing")
+        )
+        self.send_response(status)
+        self.send_header("content-type", "text/plain")
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def log_message(self, format, *args):
         pass
 
@@ -44,11 +67,14 @@ class APITestHandler(BaseHTTPRequestHandler):
 class LocalHTTPServer:
     def __enter__(self):
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), APITestHandler)
+        self.server.seen = []
         self.thread = threading.Thread(target=self.server.serve_forever)
         self.thread.daemon = True
         self.thread.start()
         host, port = self.server.server_address
         self.url = f"http://{host}:{port}"
+        self.host_header = f"{host}:{port}"
+        self.seen = self.server.seen
         return self
 
     def __exit__(self, exc_type, exc, tb):
@@ -169,6 +195,66 @@ class TestImportableAPI(TestCase):
             ).run()
 
         self.assertEqual([result.path for result in results], ["agent-only"])
+
+    def test_from_raw_request_runs_with_body_and_query(self):
+        from dirsearch import DirsearchFuzzer, FuzzerConfig
+
+        with LocalHTTPServer() as server:
+            raw_request = (
+                b"POST /submit?debug=true HTTP/1.1\r\n"
+                + f"Host: {server.host_header}\r\n".encode()
+                + b"Content-Type: application/octet-stream\r\n"
+                + b"X-Raw: yes\r\n"
+                + b"\r\n"
+                + b"payload-\xff"
+            )
+            results = DirsearchFuzzer(
+                FuzzerConfig.from_raw_request(
+                    raw_request=raw_request,
+                    scheme="http",
+                    wordlist=["probe"],
+                    include_status_codes={200},
+                )
+            ).run()
+
+        self.assertEqual([result.url for result in results], [f"{server.url}/submit/probe?debug=true"])
+        self.assertEqual(server.seen[-1][0], "POST")
+        self.assertEqual(server.seen[-1][1], "/submit/probe?debug=true")
+        self.assertEqual(server.seen[-1][3], b"payload-\xff")
+
+    def test_from_raw_request_file_uses_absolute_form_target(self):
+        from dirsearch import DirsearchFuzzer, FuzzerConfig
+
+        with LocalHTTPServer() as server, TemporaryDirectory() as directory:
+            request_file = Path(directory, "request.txt")
+            request_file.write_bytes(
+                f"GET {server.url}/ HTTP/1.1\r\n".encode()
+                + b"Host: proxy.local\r\n"
+                + b"X-Agent: yes\r\n"
+                + b"\r\n"
+            )
+            results = DirsearchFuzzer(
+                FuzzerConfig.from_raw_request(
+                    raw_file=str(request_file),
+                    wordlist=["agent-only"],
+                    include_status_codes={200},
+                )
+            ).run()
+
+        self.assertEqual([result.path for result in results], ["agent-only"])
+
+    def test_from_raw_request_requires_one_source(self):
+        from dirsearch import FuzzerConfig
+
+        with self.assertRaises(ValueError):
+            FuzzerConfig.from_raw_request(wordlist=["admin"])
+
+        with self.assertRaises(ValueError):
+            FuzzerConfig.from_raw_request(
+                raw_request=b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n",
+                raw_file="request.txt",
+                wordlist=["admin"],
+            )
 
     def test_raise_on_error_invokes_callback_then_raises(self):
         from dirsearch import DirsearchFuzzer, FuzzerConfig

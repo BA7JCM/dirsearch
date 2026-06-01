@@ -55,6 +55,7 @@ from lib.core.settings import (
     SCRIPT_PATH,
 )
 from lib.core.structures import CaseInsensitiveDict
+from lib.parse.url import append_query_string
 from lib.utils.common import safequote
 from lib.utils.file import FileUtils
 from lib.utils.mimetype import guess_mimetype
@@ -228,6 +229,7 @@ def _format_ssl_error(exc: Exception, url: str = "") -> str:
 class BaseRequester:
     def __init__(self) -> None:
         self._url: str = ""
+        self._query: str = ""
         self._rate = 0
         self.proxy_cred = options["proxy_auth"]
         self.headers = CaseInsensitiveDict(options["headers"])
@@ -262,6 +264,12 @@ class BaseRequester:
 
     def set_url(self, url: str) -> None:
         self._url = url
+
+    def set_query(self, query: str) -> None:
+        self._query = query
+
+    def request_path(self, path: str) -> str:
+        return append_query_string(path, getattr(self, "_query", ""))
 
     def set_header(self, key: str, value: str) -> None:
         self.headers[key] = value.lstrip()
@@ -338,7 +346,8 @@ class Requester(BaseRequester):
         self.increase_rate()
 
         err_msg = None
-        url = self._url + safequote(path)
+        request_path = self.request_path(path)
+        url = self._url + safequote(request_path)
 
         # Why using a loop instead of max_retries argument? Check issue #1009
         for _ in range(options["max_retries"] + 1):
@@ -531,7 +540,8 @@ class AsyncRequester(BaseRequester):
         self.increase_rate()
 
         err_msg = None
-        url = self._url + safequote(path)
+        request_path = self.request_path(path)
+        url = self._url + safequote(request_path)
         session = session or self.session
 
         for _ in range(options["max_retries"] + 1):
@@ -545,7 +555,7 @@ class AsyncRequester(BaseRequester):
                     url,
                     headers=self.headers,
                     data=options["data"],
-                    extensions={"target": (url if replay else f"/{safequote(path)}").encode()},
+                    extensions={"target": (url if replay else f"/{safequote(request_path)}").encode()},
                 )
 
                 start_time = time.perf_counter()

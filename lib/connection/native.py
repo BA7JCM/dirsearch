@@ -7,6 +7,7 @@ from lib.connection.response import NativeResponse
 from lib.core.data import options
 from lib.core.exceptions import RequestException
 from lib.core.settings import MAX_RESPONSE_SIZE
+from lib.parse.url import append_query_string
 from lib.utils.common import safequote
 
 
@@ -26,9 +27,11 @@ class NativeHTTPBackend:
         self,
         base_url: str,
         paths: Iterable[str],
+        query: str = "",
     ) -> Iterator[tuple[str, NativeResponse | None, RequestException | None]]:
         raw_paths = list(paths)
-        quoted_paths = [safequote(path) for path in raw_paths]
+        request_paths = [append_query_string(path, query) for path in raw_paths]
+        quoted_paths = [safequote(path) for path in request_paths]
         results = self._native.scan_http(
             base_url,
             quoted_paths,

@@ -29,8 +29,8 @@ class FakeNativeBackend:
         self.items = items
         self.calls = []
 
-    def scan(self, base_url, paths):
-        self.calls.append((base_url, list(paths)))
+    def scan(self, base_url, paths, query=""):
+        self.calls.append((base_url, list(paths), query))
         yield from self.items
 
 
@@ -111,7 +111,7 @@ class TestNativeFuzzer(TestCase):
         self.assertEqual(matches, [response])
         self.assertEqual(misses, [])
         self.assertEqual(errors, [])
-        self.assertEqual(backend.calls, [("https://example.com/", ["admin"])])
+        self.assertEqual(backend.calls, [("https://example.com/", ["admin"], "")])
 
     def test_native_fuzzer_routes_backend_errors(self):
         error = RequestException("boom")

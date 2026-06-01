@@ -54,8 +54,9 @@ class DummyNativeRequester:
 
 
 class FilteringNativeBackend:
-    def scan(self, base_url, paths):
+    def scan(self, base_url, paths, query=""):
         del base_url
+        del query
         for path in paths:
             if path == "keep":
                 yield path, stack_response(path, b"keep admin panel"), None

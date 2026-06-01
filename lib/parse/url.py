@@ -16,6 +16,8 @@
 #
 #  Author: Mauro Soria
 
+from urllib.parse import urlsplit, urlunsplit
+
 from lib.utils.common import lstrip_once
 
 
@@ -40,3 +42,24 @@ def parse_path(value: str) -> str:
         return "/".join(url.split("/")[1:])
     except Exception:
         return lstrip_once(value, "/")
+
+
+def ensure_trailing_path_slash(url: str) -> str:
+    parsed = urlsplit(url)
+    path = parsed.path
+    if not path.endswith("/"):
+        path += "/"
+
+    return urlunsplit(parsed._replace(path=path))
+
+
+def append_query_string(value: str, query: str) -> str:
+    if not query or "?" in value:
+        return value
+
+    path, separator, fragment = value.partition("#")
+    value = f"{path}?{query}"
+    if separator:
+        value += f"#{fragment}"
+
+    return value

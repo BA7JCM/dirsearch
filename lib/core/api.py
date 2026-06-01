@@ -23,7 +23,7 @@ import time
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from typing import Any
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import requests
 
@@ -31,6 +31,8 @@ from lib.core.exceptions import WordlistLimitError
 from lib.core.settings import DEFAULT_HEADERS, SCRIPT_PATH
 from lib.core.structures import OrderedSet
 from lib.core.wordlist_template import expand_template_line, normalize_placeholders
+from lib.parse.rawrequest import parse_raw_content
+from lib.parse.url import append_query_string, ensure_trailing_path_slash
 from lib.utils.common import safequote
 from lib.utils.file import FileUtils
 
@@ -208,6 +210,51 @@ class FuzzerConfig:
     session_factory: Callable[[], requests.Session] | None = None
     raise_on_error: bool = False
 
+    @classmethod
+    def from_raw_request(
+        cls,
+        *,
+        wordlist: Wordlist | WordlistTemplate | Iterable[str],
+        raw_request: str | bytes | None = None,
+        raw_file: str | None = None,
+        scheme: str = "http",
+        extensions: Iterable[str] = (),
+        timeout: float = 10.0,
+        follow_redirects: bool = False,
+        include_status_codes: Iterable[int] = frozenset(),
+        exclude_status_codes: Iterable[int] = frozenset({404}),
+        verify_tls: bool = False,
+        user_agent: str | None = None,
+        result_predicate: Callable[[FuzzerResult], bool] | None = None,
+        session_factory: Callable[[], requests.Session] | None = None,
+        raise_on_error: bool = False,
+    ) -> FuzzerConfig:
+        if (raw_request is None) == (raw_file is None):
+            raise ValueError("Provide exactly one of raw_request or raw_file")
+
+        if raw_file is not None:
+            raw_request = FileUtils.read_bytes(raw_file)
+
+        request = parse_raw_content(raw_request, scheme=scheme)
+
+        return cls(
+            url=request.url,
+            wordlist=wordlist,
+            extensions=tuple(extensions),
+            headers=request.headers,
+            http_method=request.method,
+            data=request.body,
+            timeout=timeout,
+            follow_redirects=follow_redirects,
+            include_status_codes=frozenset(include_status_codes),
+            exclude_status_codes=frozenset(exclude_status_codes),
+            verify_tls=verify_tls,
+            user_agent=user_agent,
+            result_predicate=result_predicate,
+            session_factory=session_factory,
+            raise_on_error=raise_on_error,
+        )
+
     def __post_init__(self) -> None:
         if not self.url:
             raise ValueError("FuzzerConfig.url is required")
@@ -321,6 +368,7 @@ class DirsearchFuzzer:
 
     @staticmethod
     def _join_url(base_url: str, path: str) -> str:
-        if not base_url.endswith("/"):
-            base_url += "/"
-        return urljoin(base_url, safequote(path))
+        parsed = urlsplit(ensure_trailing_path_slash(base_url))
+        base_url = urlunsplit(parsed._replace(query="", fragment=""))
+
+        return append_query_string(urljoin(base_url, safequote(path)), parsed.query)
