@@ -94,6 +94,7 @@ def main() -> None:
 
     wheel = build_native(args)
     python = resolve_python(args.python)
+    # Install the exact wheel path so Windows PowerShell never passes "*.whl" literally.
     run([str(python), "-m", "pip", "install", str(wheel)])
     run([str(python), "-c", "import dirsearch_native"])
 

@@ -18,7 +18,6 @@
 
 import re
 import json
-from xml.etree import ElementTree
 
 from lib.core.settings import QUERY_STRING_REGEX
 from lib.utils import safe_xml
@@ -38,7 +37,7 @@ class MimeTypeUtils:
         try:
             safe_xml.fromstring(content)
             return True
-        except (ElementTree.ParseError, safe_xml.UnsafeXML):
+        except (safe_xml.ParseError, safe_xml.UnsafeXML):
             return False
 
     @staticmethod
