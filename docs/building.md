@@ -33,6 +33,8 @@ Requirements:
 - PyInstaller 6.20.0.
 - Rust and maturin when building `native-rust`.
 
+Native Rust builds use `scripts/build_native.py` to build one wheel, install that exact wheel path, and verify `import dirsearch_native`. This avoids shell-specific wildcard behavior on Windows and keeps Docker, PyInstaller, and portable builds on the same path. The native wheel is packaged with `requires-python >=3.14` and PyO3 `cp313-abi3`, the highest stable ABI feature available in PyO3 0.24 for Python 3.14 release builds.
+
 Build the current platform:
 
 ```sh

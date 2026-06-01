@@ -55,9 +55,8 @@ Install Rust and maturin before building:
 
 ```bash
 rustup default stable
-python3 -m pip install --only-binary=:all: maturin
-python3 -m maturin build --release --manifest-path native/Cargo.toml --out dist/native-wheels
-python3 -m pip install dist/native-wheels/*.whl
+python3.14 -m pip install --only-binary=:all: maturin
+python3.14 scripts/build_native.py --out dist/native-wheels
 ```
 
 ### macOS Code Signing

@@ -187,24 +187,16 @@ def install_dependencies(python: Path, app: Path, stack: str) -> None:
     if stack == "native-rust":
         run([str(python), "-m", "pip", "install", "--only-binary=:all:", "maturin"])
         wheel_dir = app.parent / "native-wheels"
-        wheel_dir.mkdir(exist_ok=True)
         run(
             [
                 str(python),
-                "-m",
-                "maturin",
-                "build",
-                "--release",
-                "--manifest-path",
-                str(app / "native" / "Cargo.toml"),
+                str(app / "scripts" / "build_native.py"),
+                "--python",
+                str(python),
                 "--out",
                 str(wheel_dir),
             ]
         )
-        wheels = sorted(wheel_dir.glob("*.whl"))
-        if not wheels:
-            raise RuntimeError("maturin did not produce a native wheel")
-        run([str(python), "-m", "pip", "install", str(wheels[-1])])
         run([str(python), "-m", "pip", "uninstall", "-y", "maturin"])
         shutil.rmtree(wheel_dir, ignore_errors=True)
         shutil.rmtree(app / "native" / "target", ignore_errors=True)

@@ -43,6 +43,7 @@ hidden_imports += [
     'mysql.connector',
     'psycopg',
     'defusedcsv',
+    'defusedxml',
     'requests_toolbelt',
     'httpx_ntlm',
     'h11',

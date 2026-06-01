@@ -54,10 +54,7 @@ build_native() {
         rustup default stable
     fi
     "$PYTHON_CMD" -m pip install --only-binary=:all: maturin
-    mkdir -p dist/native-wheels
-    "$PYTHON_CMD" -m maturin build --release --manifest-path native/Cargo.toml --out dist/native-wheels
-    "$PYTHON_CMD" -m pip install dist/native-wheels/*.whl
-    "$PYTHON_CMD" -c "import dirsearch_native"
+    "$PYTHON_CMD" scripts/build_native.py --out dist/native-wheels
 }
 
 build_stack() {

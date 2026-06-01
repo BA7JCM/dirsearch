@@ -20,7 +20,12 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from xml.etree import ElementTree
+
+from defusedxml import ElementTree
+from defusedxml.common import DefusedXmlException
+
+
+ParseError = ElementTree.ParseError
 
 
 FORBIDDEN_XML_MARKUP = re.compile(br"<!\s*(?:DOCTYPE|ENTITY)\b", re.IGNORECASE)
@@ -41,12 +46,18 @@ def reject_unsafe_xml_markup(content: bytes | str) -> bytes | str:
     return content
 
 
-def fromstring(content: bytes | str) -> ElementTree.Element:
+def fromstring(content: bytes | str):
     reject_unsafe_xml_markup(content)
-    return ElementTree.fromstring(content)
+    try:
+        return ElementTree.fromstring(content)
+    except DefusedXmlException as error:
+        raise UnsafeXML("Unsafe XML markup is not supported") from error
 
 
-def parse_file(path: str | Path) -> ElementTree.ElementTree:
+def parse_file(path: str | Path):
     data = Path(path).read_bytes()
     reject_unsafe_xml_markup(data)
-    return ElementTree.ElementTree(ElementTree.fromstring(data))
+    try:
+        return ElementTree.parse(path)
+    except DefusedXmlException as error:
+        raise UnsafeXML("Unsafe XML markup is not supported") from error

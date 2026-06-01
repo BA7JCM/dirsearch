@@ -58,4 +58,8 @@ Recent history favors short imperative commits such as `Fix async SSL classifica
 Do not use automation-specific prefixes such as `codex/` in branch names or `[codex]` in PR titles. Use plain descriptive branch names and PR titles that fit the project history.
 
 ## Security & Configuration Tips
-Do not commit secrets, session artifacts, local virtualenv files, or cloud benchmark artifacts. DigitalOcean tokens must stay in environment variables such as `DIGITALOCEAN_ACCESS_TOKEN`; never write them into scripts, result files, or docs. If you change dependencies, keep `requirements.txt`, `requirements/runtime.txt`, and packaging metadata aligned. If you add runtime files or imports, verify both `pyinstaller/dirsearch.spec` and GitHub Actions workflows still bundle them.
+Do not commit secrets, session artifacts, local virtualenv files, or cloud benchmark artifacts. DigitalOcean tokens must stay in environment variables such as `DIGITALOCEAN_ACCESS_TOKEN`; never write them into scripts, result files, or docs.
+
+Never include private infrastructure details in commits, docs, PR bodies, PR comments, issues, or release notes. This includes internal hostnames, machine names, SSH targets, provider account details, regions, IP addresses, private paths, runner names, or operational topology. When validation used private infrastructure, describe only the generic platform and toolchain, such as "validated on Windows amd64 with Python 3.13 and MSVC Rust."
+
+If you change dependencies, keep `requirements.txt`, `requirements/runtime.txt`, and packaging metadata aligned. If you add runtime files or imports, verify both `pyinstaller/dirsearch.spec` and GitHub Actions workflows still bundle them.

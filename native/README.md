@@ -17,10 +17,13 @@ and not-found callbacks authoritative. Native regex matching uses Rust's
 Build locally with a Rust toolchain and maturin:
 
 ```sh
-python3 -m pip install maturin
-python3 -m maturin build --release --manifest-path native/Cargo.toml --out dist/native-wheels
-python3 -m pip install dist/native-wheels/*.whl
+python3.14 -m pip install maturin
+python3.14 scripts/build_native.py --out dist/native-wheels
 ```
+
+The helper installs the exact built wheel and verifies `import dirsearch_native`.
+Release-equivalent native wheels target Python 3.14 and PyO3's `cp313-abi3`
+stable ABI.
 
 The benchmark summary for this backend is in
 [`docs/native-backend-benchmarks.md`](../docs/native-backend-benchmarks.md).
