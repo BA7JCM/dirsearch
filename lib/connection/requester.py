@@ -33,6 +33,9 @@ import httpx
 import requests
 from requests.auth import AuthBase, HTTPBasicAuth, HTTPDigestAuth
 from requests.packages import urllib3
+from urllib3 import connection as urllib3_connection
+from urllib3 import connectionpool as urllib3_connectionpool
+from urllib3 import poolmanager as urllib3_poolmanager
 from requests_ntlm import HttpNtlmAuth
 from httpx_ntlm import HttpNtlmAuth as HttpxNtlmAuth
 from requests_toolbelt.adapters.socket_options import SocketOptionsAdapter
@@ -64,6 +67,76 @@ from lib.utils.mimetype import guess_mimetype
 urllib3.disable_warnings(urllib3.exceptions.SecurityWarning)
 # Use custom `socket.getaddrinfo` for `requests` which supports DNS caching
 socket.getaddrinfo = cached_getaddrinfo
+
+_request_target_state = threading.local()
+
+
+def _join_request_target(base_url: str, quoted_path: str) -> str:
+    base_path = urlparse(base_url).path or "/"
+    target = "/" if base_path == "/" else f"{base_path.rstrip('/')}/"
+    return target + quoted_path.lstrip("/")
+
+
+# urllib3 encodes origin-form targets before writing them to the socket. Keep
+# the already-quoted dirsearch target for direct requests so fuzzed characters
+# such as malformed percent escapes and backslashes reach the server unchanged.
+class PathPreservingHTTPConnection(urllib3_connection.HTTPConnection):
+    def request(self, method, url, body=None, headers=None, *args, **kwargs):
+        target = getattr(_request_target_state, "target", None)
+        if target:
+            url = target
+
+        return super().request(method, url, body, headers, *args, **kwargs)
+
+
+class PathPreservingHTTPSConnection(urllib3_connection.HTTPSConnection):
+    def request(self, method, url, body=None, headers=None, *args, **kwargs):
+        target = getattr(_request_target_state, "target", None)
+        if target:
+            url = target
+
+        return super().request(method, url, body, headers, *args, **kwargs)
+
+
+class PathPreservingHTTPConnectionPool(urllib3_connectionpool.HTTPConnectionPool):
+    ConnectionCls = PathPreservingHTTPConnection
+
+
+class PathPreservingHTTPSConnectionPool(urllib3_connectionpool.HTTPSConnectionPool):
+    ConnectionCls = PathPreservingHTTPSConnection
+
+
+class PathPreservingSocketOptionsAdapter(SocketOptionsAdapter):
+    def init_poolmanager(self, connections, maxsize, block=False):
+        self.poolmanager = urllib3_poolmanager.PoolManager(
+            num_pools=connections,
+            maxsize=maxsize,
+            block=block,
+            socket_options=self.socket_options,
+        )
+        self.poolmanager.pool_classes_by_scheme = {
+            "http": PathPreservingHTTPConnectionPool,
+            "https": PathPreservingHTTPSConnectionPool,
+        }
+
+    def request_url(self, request: requests.PreparedRequest, proxies: dict[str, str]) -> str:
+        target = getattr(request, "_dirsearch_request_target", None)
+        if target and not proxies:
+            return target
+
+        return super().request_url(request, proxies)
+
+    def send(self, request, **kwargs):
+        target = getattr(request, "_dirsearch_request_target", None)
+        proxies = kwargs.get("proxies") or {}
+        if not target or proxies:
+            return super().send(request, **kwargs)
+
+        _request_target_state.target = target
+        try:
+            return super().send(request, **kwargs)
+        finally:
+            del _request_target_state.target
 
 
 def _is_requests_ssl_error(exc: Exception) -> bool:
@@ -310,7 +383,7 @@ class Requester(BaseRequester):
         for scheme in ("http://", "https://"):
             self.session.mount(
                 scheme,
-                SocketOptionsAdapter(
+                PathPreservingSocketOptionsAdapter(
                     max_retries=0,
                     pool_maxsize=options["thread_count"],
                     socket_options=self._socket_options,
@@ -347,7 +420,8 @@ class Requester(BaseRequester):
 
         err_msg = None
         request_path = self.request_path(path)
-        url = self._url + safequote(request_path)
+        quoted_request_path = safequote(request_path)
+        url = self._url + quoted_request_path
 
         # Why using a loop instead of max_retries argument? Check issue #1009
         for _ in range(options["max_retries"] + 1):
@@ -381,6 +455,9 @@ class Requester(BaseRequester):
                 )
                 prep = self.session.prepare_request(request)
                 prep.url = url
+                prep._dirsearch_request_target = _join_request_target(
+                    self._url, quoted_request_path
+                )
 
                 start_time = time.perf_counter()
                 origin_response = self.session.send(
@@ -541,7 +618,8 @@ class AsyncRequester(BaseRequester):
 
         err_msg = None
         request_path = self.request_path(path)
-        url = self._url + safequote(request_path)
+        quoted_request_path = safequote(request_path)
+        url = self._url + quoted_request_path
         session = session or self.session
 
         for _ in range(options["max_retries"] + 1):
@@ -555,7 +633,13 @@ class AsyncRequester(BaseRequester):
                     url,
                     headers=self.headers,
                     data=options["data"],
-                    extensions={"target": (url if replay else f"/{safequote(request_path)}").encode()},
+                    extensions={
+                        "target": (
+                            url
+                            if replay
+                            else _join_request_target(self._url, quoted_request_path)
+                        ).encode()
+                    },
                 )
 
                 start_time = time.perf_counter()
