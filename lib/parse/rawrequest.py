@@ -43,8 +43,8 @@ def parse_raw(raw_file: str) -> tuple[list[str], str, dict[str, str], str | None
         host = headers.get("host")
     except KeyError:
         raise InvalidRawRequest("Can't find the Host header in the raw request")
-    except Exception as e:
+    except (IndexError, UnicodeError, ValueError) as e:
         logger.exception(e)
-        raise InvalidRawRequest("The raw request is formatively invalid")
+        raise InvalidRawRequest("The raw request is formatively invalid") from e
 
     return [host + path], method, dict(headers), body

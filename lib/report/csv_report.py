@@ -34,7 +34,7 @@ class CSVReport(FileReportMixin, BaseReport):
             rows = list(csv.reader(fh, delimiter=",", quotechar='"'))
             # Not a dirsearch CSV report
             if rows[0] != self.new()[0]:
-                raise Exception
+                raise ValueError(f"{file} is not a dirsearch CSV report")
 
             return rows
 

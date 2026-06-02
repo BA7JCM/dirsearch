@@ -39,14 +39,17 @@ class MySQLReport(SQLReportMixin, BaseReport):
         from mysql.connector.constants import SQLMode
 
         parsed = urlparse(url)
-        conn = mysql.connector.connect(
-            host=parsed.hostname,
-            port=parsed.port or 3306,
-            user=parsed.username,
-            password=parsed.password,
-            database=parsed.path.lstrip("/"),
-            connection_timeout=DB_CONNECTION_TIMEOUT,
-        )
+        try:
+            conn = mysql.connector.connect(
+                host=parsed.hostname,
+                port=parsed.port or 3306,
+                user=parsed.username,
+                password=parsed.password,
+                database=parsed.path.lstrip("/"),
+                connection_timeout=DB_CONNECTION_TIMEOUT,
+            )
+        except mysql.connector.Error as error:
+            raise OSError(str(error)) from error
         conn.sql_mode = [SQLMode.ANSI_QUOTES]
 
         return conn

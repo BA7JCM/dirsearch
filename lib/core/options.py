@@ -46,6 +46,7 @@ from lib.core.wordlist_backend import WORDLIST_BACKENDS
 from lib.parse.cmdline import parse_arguments
 from lib.parse.config import ConfigParser
 from lib.parse.headers import HeadersParser
+from lib.utils import safe_xml
 from lib.utils.common import iprange, read_stdin, strip_and_uniquify
 from lib.utils.file import File, FileUtils
 from lib.parse.nmap import parse_nmap
@@ -138,7 +139,13 @@ def parse_options() -> dict[str, Any]:
     elif opt.nmap_report:
         try:
             opt.urls = parse_nmap(opt.nmap_report)
-        except Exception as e:
+        except (
+            OSError,
+            AttributeError,
+            TypeError,
+            safe_xml.ParseError,
+            safe_xml.UnsafeXML,
+        ) as e:
             print("Error while parsing Nmap report: " + str(e))
             sys.exit(1)
     elif not opt.urls and not opt.wordlist_status:
@@ -201,14 +208,14 @@ def parse_options() -> dict[str, Any]:
         try:
             fd = _access_file(opt.headers_file)
             headers.update(dict(HeadersParser(fd.read())))
-        except Exception as e:
+        except (OSError, UnicodeError, ValueError) as e:
             print("Error in headers file: " + str(e))
             sys.exit(1)
 
     if opt.headers:
         try:
             headers.update(dict(HeadersParser("\n".join(opt.headers))))
-        except Exception:
+        except (UnicodeError, ValueError):
             print("Invalid headers")
             sys.exit(1)
 

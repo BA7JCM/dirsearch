@@ -33,7 +33,7 @@ def detect_scheme(host, port):
     try:
         conn.connect((host, port))
         return "https"
-    except Exception:
+    except OSError:
         return "http"
     finally:
         conn.close()
