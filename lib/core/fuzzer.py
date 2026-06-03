@@ -484,7 +484,11 @@ class NativeFuzzer(Fuzzer):
                 if not paths:
                     break
 
-                for path, response, error in self._native_backend.scan(self._requester._url, paths):
+                for path, response, error in self._native_backend.scan(
+                    self._requester._url,
+                    paths,
+                    getattr(self._requester, "_query", ""),
+                ):
                     if self._quit_event.is_set():
                         break
                     if error is not None:

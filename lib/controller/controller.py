@@ -26,6 +26,7 @@ import signal
 import sys
 import re
 import time
+from types import SimpleNamespace
 from typing import Any
 
 from urllib.parse import urlparse
@@ -47,6 +48,7 @@ from lib.core.exceptions import (
     WordlistLimitError,
 )
 from lib.core.logger import enable_logging, logger
+from lib.core.request_backend import get_native_request_backend_error
 from lib.core.settings import (
     BANNER,
     DEFAULT_HEADERS,
@@ -61,7 +63,7 @@ from lib.core.settings import (
     UNKNOWN,
 )
 from lib.parse.rawrequest import parse_raw
-from lib.parse.url import clean_path, parse_path
+from lib.parse.url import clean_path, ensure_trailing_path_slash, parse_path
 from lib.report.manager import ReportManager
 from lib.utils.common import lstrip_once
 from lib.utils.crawl import Crawler
@@ -273,6 +275,11 @@ class Controller:
             except InvalidRawRequest as e:
                 print(str(e))
                 sys.exit(1)
+
+            if options["request_backend"] == "native":
+                if error := get_native_request_backend_error(SimpleNamespace(**options)):
+                    print(error)
+                    sys.exit(1)
         else:
             options["headers"] = {**DEFAULT_HEADERS, **options["headers"]}
 
@@ -494,8 +501,7 @@ class Controller:
         # If no scheme specified, unset it first
         if "://" not in url:
             url = f'{options["scheme"] or UNKNOWN}://{url}'
-        if not url.endswith("/"):
-            url += "/"
+        url = ensure_trailing_path_slash(url)
 
         parsed = urlparse(url)
         self.base_path = lstrip_once(parsed.path, "/")
@@ -539,6 +545,7 @@ class Controller:
         self.url += "/"
 
         self.requester.set_url(self.url)
+        self.requester.set_query(parsed.query)
 
     def reset_consecutive_errors(self, response: BaseResponse) -> None:
         self.consecutive_errors = 0

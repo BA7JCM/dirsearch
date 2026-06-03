@@ -250,6 +250,49 @@ results = DirsearchFuzzer(
 The fuzzer owns the session returned by `session_factory` and closes it after the
 scan.
 
+### Raw Requests
+
+Use `FuzzerConfig.from_raw_request()` when an integration already has an HTTP
+request captured from a proxy, a test fixture, or another scanner:
+
+```python
+from dirsearch import DirsearchFuzzer, FuzzerConfig
+
+raw_request = (
+    b"POST /api/search?debug=true HTTP/1.1\r\n"
+    b"Host: example.com\r\n"
+    b"Content-Type: application/json\r\n"
+    b"\r\n"
+    b'{"q":"admin"}'
+)
+
+config = FuzzerConfig.from_raw_request(
+    raw_request=raw_request,
+    scheme="https",
+    wordlist=["users", "orders"],
+    include_status_codes={200, 401, 403},
+)
+
+results = DirsearchFuzzer(config).run()
+```
+
+`raw_request` accepts `bytes` or `str`. Use `bytes` when the request body must be
+preserved exactly. `raw_file` can be used instead when the request is already on
+disk:
+
+```python
+config = FuzzerConfig.from_raw_request(
+    raw_file="tmp/request.txt",
+    scheme="https",
+    wordlist=["admin", "login"],
+)
+```
+
+Origin-form targets such as `GET /admin HTTP/1.1` use the `Host` header and the
+provided `scheme`. Absolute-form targets such as
+`GET https://example.com/admin HTTP/1.1` use the scheme and authority from the
+request line. Method, headers, query string, and body are carried into the scan.
+
 ## Callbacks and Streaming
 
 Callbacks let agents stream findings while still receiving the final list:

@@ -642,9 +642,33 @@ fn response_length(headers: &[(String, String)], body_length: usize) -> usize {
 
 fn should_use_raw_http(base_url: &str, path: &str) -> bool {
     base_url.starts_with("http://")
-        && path
-            .split(['/', '?', '#'])
-            .any(|segment| segment == "." || segment == "..")
+        && (has_dot_segment(path) || path.contains('\\') || has_malformed_percent_escape(path))
+}
+
+fn has_dot_segment(path: &str) -> bool {
+    path.split(['/', '?', '#'])
+        .any(|segment| segment == "." || segment == "..")
+}
+
+fn has_malformed_percent_escape(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    let mut index = 0;
+
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            if index + 2 >= bytes.len()
+                || !bytes[index + 1].is_ascii_hexdigit()
+                || !bytes[index + 2].is_ascii_hexdigit()
+            {
+                return true;
+            }
+            index += 3;
+        } else {
+            index += 1;
+        }
+    }
+
+    false
 }
 
 fn raw_http_get(
@@ -923,6 +947,28 @@ mod tests {
 
     fn content_length(value: usize) -> Vec<(String, String)> {
         vec![("Content-Length".to_string(), value.to_string())]
+    }
+
+    #[test]
+    fn raw_http_path_preservation_detects_targets_reqwest_may_rewrite() {
+        assert!(should_use_raw_http(
+            "http://example.com/",
+            "admin%3d..%1\\*"
+        ));
+        assert!(should_use_raw_http("http://example.com/", "admin%3d..%1*"));
+        assert!(should_use_raw_http(
+            "http://example.com/",
+            "admin/%83%5c/.."
+        ));
+        assert!(!should_use_raw_http(
+            "http://example.com/",
+            "admin%20space/%E6%B5%8B%E8%AF%95"
+        ));
+        assert!(!should_use_raw_http("http://example.com/", "admin%3d"));
+        assert!(!should_use_raw_http(
+            "https://example.com/",
+            "admin%3d..%1\\*"
+        ));
     }
 
     #[test]
