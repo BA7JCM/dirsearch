@@ -37,6 +37,10 @@ from lib.core.request_backend import (
     REQUEST_BACKENDS,
     get_native_request_backend_error,
 )
+from lib.core.native_runtime import (
+    get_native_python_version_error,
+    get_native_runtime_error,
+)
 from lib.core.filters import (
     parse_numeric_ranges,
     parse_time_filters,
@@ -177,6 +181,12 @@ def parse_options() -> dict[str, Any]:
 
     if opt.request_backend not in REQUEST_BACKENDS:
         print("--request-backend must be one of: " + ", ".join(REQUEST_BACKENDS))
+        sys.exit(1)
+
+    if (
+        opt.request_backend == "native" or opt.wordlist_backend == "native"
+    ) and (error := get_native_python_version_error()):
+        print(error)
         sys.exit(1)
 
     if opt.tor:
@@ -345,6 +355,12 @@ def parse_options() -> dict[str, Any]:
         if error := get_native_request_backend_error(opt):
             print(error)
             sys.exit(1)
+
+    if error := get_native_runtime_error(
+        opt.request_backend, opt.wordlist_backend
+    ):
+        print(error)
+        sys.exit(1)
 
     return vars(opt)
 

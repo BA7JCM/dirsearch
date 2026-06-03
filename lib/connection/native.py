@@ -6,6 +6,7 @@ from typing import Any
 from lib.connection.response import NativeResponse
 from lib.core.data import options
 from lib.core.exceptions import RequestException
+from lib.core.native_runtime import get_native_backend_install_error
 from lib.core.settings import MAX_RESPONSE_SIZE
 from lib.parse.url import append_query_string
 from lib.utils.common import safequote
@@ -16,10 +17,7 @@ class NativeHTTPBackend:
         try:
             import dirsearch_native
         except ImportError as e:
-            raise RequestException(
-                "Native request backend is not available. "
-                "Build it with: python3 -m maturin develop --manifest-path native/Cargo.toml"
-            ) from e
+            raise RequestException(get_native_backend_install_error()) from e
 
         self._native = dirsearch_native
 

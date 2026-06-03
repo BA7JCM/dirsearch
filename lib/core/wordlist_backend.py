@@ -5,6 +5,7 @@ from typing import Protocol
 
 from lib.core.data import options
 from lib.core.exceptions import WordlistBackendUnavailableError, WordlistLimitError
+from lib.core.native_runtime import get_native_backend_install_error
 from lib.core.settings import (
     EXCLUDE_OVERWRITE_EXTENSIONS,
     EXTENSION_RECOGNITION_REGEX,
@@ -136,10 +137,7 @@ class NativeWordlistBackend:
         try:
             import dirsearch_native
         except ImportError as e:
-            raise WordlistBackendUnavailableError(
-                "Native wordlist backend is not available. "
-                "Build it with: python3 -m maturin develop --manifest-path native/Cargo.toml"
-            ) from e
+            raise WordlistBackendUnavailableError(get_native_backend_install_error()) from e
 
         self._native = dirsearch_native
 
