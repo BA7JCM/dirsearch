@@ -46,6 +46,7 @@ dynamic = ["version", "dependencies"]
 
 [project.scripts]
 dirsearch = "dirsearch.dirsearch:main"
+dirsearch-build-native = "dirsearch.lib.core.native_builder:main"
 
 [project.optional-dependencies]
 mysql = ["mysql-connector-python==9.6.0"]

@@ -43,6 +43,7 @@ shutil.copytree(
         ".venv",
         "build",
         "dist",
+        "target",
         "__pycache__",
         "*.pyc",
         "*.pyo",
@@ -107,12 +108,18 @@ setuptools.setup(
         "postgresql": ["psycopg[binary]==3.3.3"],
         "db": read_requirements(ROOT / "requirements/db.txt"),
     },
-    entry_points={"console_scripts": ["dirsearch=dirsearch.dirsearch:main"]},
+    entry_points={
+        "console_scripts": [
+            "dirsearch=dirsearch.dirsearch:main",
+            "dirsearch-build-native=dirsearch.lib.core.native_builder:main",
+        ]
+    },
     packages=setuptools.find_packages(exclude=("dirsearch.tests", "dirsearch.tests.*")),
     package_data={
         "dirsearch": [
             "config.ini",
             *package_files(package_root / "db"),
+            *package_files(package_root / "native"),
         ],
         "dirsearch.lib.report": ["templates/*.html"],
     },
