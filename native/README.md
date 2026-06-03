@@ -14,16 +14,22 @@ lightweight events with metadata and an empty body so Python can keep progress
 and not-found callbacks authoritative. Native regex matching uses Rust's
 `regex` crate; patterns unsupported by that engine fail before the scan starts.
 
-Build locally with a Rust toolchain and maturin:
+Build the native engine from an installed dirsearch package with Python 3.14,
+Rust/Cargo, Python development headers, and a C compiler:
 
 ```sh
-python3.14 -m pip install maturin
+dirsearch-build-native
+```
+
+For development from a source checkout, use the repository helper:
+
+```sh
 python3.14 scripts/build_native.py --out dist/native-wheels
 ```
 
-The helper installs the exact built wheel and verifies `import dirsearch_native`.
+Both helpers install the exact built wheel and verify `import dirsearch_native`.
 Release-equivalent native wheels target Python 3.14 and PyO3's `cp313-abi3`
-stable ABI.
+stable ABI. `maturin` is pulled by pip/build scripts from `native/pyproject.toml`.
 
 The benchmark summary for this backend is in
 [`docs/native-backend-benchmarks.md`](../docs/native-backend-benchmarks.md).

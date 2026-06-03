@@ -85,6 +85,7 @@
 - [Xeonacid](https://github.com/Xeonacid)
 - [Valentijn Scholten](https://www.github.com/valentijnscholten)
 - [partoneplay](https://github.com/partoneplay)
+- [xujiantop-crypto](https://github.com/xujiantop-crypto)
 - [mshzy](https://github.com/mshzy)
 
 
