@@ -15,7 +15,7 @@ class TestReportExceptionHandling(TestCase):
             report = Path(directory, "report.csv")
             report.write_text("Not,Dirsearch\n")
 
-            with self.assertRaisesRegex(ValueError, "dirsearch CSV report"):
+            with self.assertRaisesRegex(ValueError, "CSV header mismatch.*expected.*got"):
                 CSVReport().parse(str(report))
 
     def test_file_report_validation_chains_parse_error(self):

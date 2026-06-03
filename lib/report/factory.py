@@ -18,7 +18,6 @@
 
 import sqlite3
 from abc import ABC, abstractmethod
-from xml.etree import ElementTree as ET
 
 from lib.core.decorators import locked
 from lib.core.exceptions import (
@@ -26,6 +25,7 @@ from lib.core.exceptions import (
     FileExistsException,
     InvalidURLException,
 )
+from lib.utils import safe_xml
 from lib.utils.file import FileUtils
 
 
@@ -35,7 +35,8 @@ REPORT_PARSE_ERRORS = (
     KeyError,
     IndexError,
     TypeError,
-    ET.ParseError,
+    safe_xml.ParseError,
+    safe_xml.UnsafeXML,
 )
 
 SQL_CONNECTION_ERRORS = (

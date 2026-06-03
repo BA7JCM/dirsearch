@@ -85,6 +85,7 @@
 - [Xeonacid](https://github.com/Xeonacid)
 - [Valentijn Scholten](https://www.github.com/valentijnscholten)
 - [partoneplay](https://github.com/partoneplay)
+- [mshzy](https://github.com/mshzy)
 
 
 Special thanks to all the people who are named here!
