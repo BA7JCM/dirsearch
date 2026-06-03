@@ -16,11 +16,36 @@
 #
 #  Author: Mauro Soria
 
+import sqlite3
 from abc import ABC, abstractmethod
 
 from lib.core.decorators import locked
-from lib.core.exceptions import CannotConnectException, FileExistsException
+from lib.core.exceptions import (
+    CannotConnectException,
+    FileExistsException,
+    InvalidURLException,
+)
+from lib.utils import safe_xml
 from lib.utils.file import FileUtils
+
+
+REPORT_PARSE_ERRORS = (
+    OSError,
+    ValueError,
+    KeyError,
+    IndexError,
+    TypeError,
+    safe_xml.ParseError,
+    safe_xml.UnsafeXML,
+)
+
+SQL_CONNECTION_ERRORS = (
+    OSError,
+    ValueError,
+    ImportError,
+    sqlite3.DatabaseError,
+    InvalidURLException,
+)
 
 
 class BaseReport(ABC):
@@ -44,8 +69,8 @@ class FileReportMixin:
     def validate(self, file):
         try:
             self.parse(file)
-        except Exception:
-            raise FileExistsException(f"Output file {file} already exists")
+        except REPORT_PARSE_ERRORS as error:
+            raise FileExistsException(f"Output file {file} already exists") from error
 
     def parse(self, file):
         return open(file, "r").read()
@@ -93,8 +118,8 @@ class SQLReportMixin:
     def initiate(self, database, table):
         try:
             conn = self.get_connection(database)
-        except Exception as e:
-            raise CannotConnectException(f"Cannot connect to the SQL database: {str(e)}")
+        except SQL_CONNECTION_ERRORS as e:
+            raise CannotConnectException(f"Cannot connect to the SQL database: {str(e)}") from e
 
         cursor = conn.cursor()
 

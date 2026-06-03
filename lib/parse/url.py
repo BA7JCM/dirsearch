@@ -40,7 +40,7 @@ def parse_path(value: str) -> str:
             raise ValueError
 
         return "/".join(url.split("/")[1:])
-    except Exception:
+    except ValueError:
         return lstrip_once(value, "/")
 
 

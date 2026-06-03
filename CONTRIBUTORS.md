@@ -86,6 +86,7 @@
 - [Valentijn Scholten](https://www.github.com/valentijnscholten)
 - [partoneplay](https://github.com/partoneplay)
 - [xujiantop-crypto](https://github.com/xujiantop-crypto)
+- [mshzy](https://github.com/mshzy)
 
 
 Special thanks to all the people who are named here!

@@ -35,4 +35,7 @@ class PostgreSQLReport(SQLReportMixin, BaseReport):
 
         import psycopg
 
-        return psycopg.connect(url, connect_timeout=DB_CONNECTION_TIMEOUT)
+        try:
+            return psycopg.connect(url, connect_timeout=DB_CONNECTION_TIMEOUT)
+        except psycopg.Error as error:
+            raise OSError(str(error)) from error

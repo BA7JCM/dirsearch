@@ -194,9 +194,9 @@ class Controller:
                 try:
                     FileUtils.create_dir(FileUtils.parent(options["log_file"]))
                     if not FileUtils.can_write(options["log_file"]):
-                        raise Exception
+                        raise OSError(f'Cannot write log file: {options["log_file"]}')
                     enable_logging()
-                except Exception:
+                except OSError:
                     interface.error(
                         f'Couldn\'t create log file at {options["log_file"]}'
                     )
@@ -299,11 +299,11 @@ class Controller:
             try:
                 FileUtils.create_dir(FileUtils.parent(options["log_file"]))
                 if not FileUtils.can_write(options["log_file"]):
-                    raise Exception
+                    raise OSError(f'Cannot write log file: {options["log_file"]}')
 
                 enable_logging()
 
-            except Exception:
+            except OSError:
                 interface.error(
                     f'Couldn\'t create log file at {options["log_file"]}'
                 )
@@ -413,7 +413,7 @@ class Controller:
                     shutil.rmtree(options["session_file"])
                 else:
                     os.remove(options["session_file"])
-            except Exception:
+            except OSError:
                 interface.error("Failed to delete old session file, remove it to free some space")
 
     def start(self) -> None:
