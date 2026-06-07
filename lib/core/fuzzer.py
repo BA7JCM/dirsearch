@@ -39,7 +39,7 @@ from lib.core.settings import (
     WILDCARD_TEST_POINT_MARKER,
 )
 from lib.parse.url import clean_path
-from lib.utils.common import get_readable_size, lstrip_once
+from lib.utils.common import lstrip_once
 from lib.utils.diff import normalize_dynamic_content
 
 
@@ -113,7 +113,7 @@ class BaseFuzzer:
         ):
             return True
 
-        if get_readable_size(resp.length).rstrip() in options["exclude_sizes"]:
+        if resp.length in options["exclude_sizes"]:
             return True
 
         if resp.length < options["minimum_response_size"]:

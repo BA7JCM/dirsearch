@@ -87,6 +87,10 @@ dirsearch also performs automatic wildcard and soft-404 calibration. You normall
 python3 dirsearch.py -e php,html,js -u https://target --exclude-sizes 1B,243KB
 ```
 
+Response size filters accept raw bytes without a suffix or readable units such as
+`B`, `KB`, `MB`, and `GB`. The same format works for `--exclude-sizes`,
+`--min-response-size`, and `--max-response-size`.
+
 ```sh
 python3 dirsearch.py -e php,html,js -u https://target --exclude-text "403 Forbidden"
 ```

@@ -100,7 +100,7 @@ Options:
                         ranges (e.g. 301,500-599)
     --exclude-sizes=SIZES
                         Exclude responses by sizes, separated by commas (e.g.
-                        0B,4KB)
+                        0,0B,4KB)
     --exclude-text=TEXTS
                         Exclude responses by text, can use multiple flags
     --exclude-regex=REGEX
@@ -115,9 +115,9 @@ Options:
                         Skip target whenever hit one of these status codes,
                         separated by commas, support ranges
     --min-response-size=LENGTH
-                        Minimum response length
+                        Minimum response length (e.g. 1024,1KB)
     --max-response-size=LENGTH
-                        Maximum response length
+                        Maximum response length (e.g. 1024,1KB)
     --max-time=SECONDS  Maximum runtime for the scan
     --target-max-time=SECONDS
                         Maximum runtime for a target
