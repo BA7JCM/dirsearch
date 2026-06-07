@@ -2,7 +2,12 @@ from unittest import TestCase
 
 from lib.connection.response import NativeResponse
 from lib.core.data import blacklists, options
-from lib.core.filters import parse_numeric_ranges, parse_time_filters
+from lib.core.filters import (
+    parse_numeric_ranges,
+    parse_size,
+    parse_size_list,
+    parse_time_filters,
+)
 from lib.core.fuzzer import BaseFuzzer
 
 
@@ -79,6 +84,34 @@ class TestAdvancedFilters(TestCase):
 
         self.assertTrue(self.fuzzer.is_excluded(response(body=b"not found")))
         self.assertFalse(self.fuzzer.is_excluded(response(body=b"admin panel")))
+
+    def test_parse_response_sizes(self):
+        self.assertEqual(parse_size("1024"), 1024)
+        self.assertEqual(parse_size("1024B"), 1024)
+        self.assertEqual(parse_size("1KB"), 1024)
+        self.assertEqual(parse_size("2MB"), 2 * 1024 * 1024)
+        self.assertEqual(parse_size(" 3 gb "), 3 * 1024 ** 3)
+        self.assertEqual(parse_size_list("1024,1KB,2MB"), {1024, 2 * 1024 * 1024})
+
+    def test_parse_response_size_rejects_invalid_units(self):
+        with self.assertRaises(ValueError):
+            parse_size("12XB")
+
+    def test_exclude_sizes_match_raw_bytes_and_units(self):
+        options["exclude_sizes"] = parse_size_list("1024,2KB")
+
+        self.assertTrue(self.fuzzer.is_excluded(response(body=b"x" * 1024)))
+        self.assertTrue(self.fuzzer.is_excluded(response(body=b"x" * 2048)))
+        self.assertFalse(self.fuzzer.is_excluded(response(body=b"x" * 1536)))
+
+    def test_min_and_max_response_sizes_use_parsed_bytes(self):
+        options["minimum_response_size"] = parse_size("1KB")
+        options["maximum_response_size"] = parse_size("2KB")
+
+        self.assertTrue(self.fuzzer.is_excluded(response(body=b"x" * 1023)))
+        self.assertFalse(self.fuzzer.is_excluded(response(body=b"x" * 1024)))
+        self.assertFalse(self.fuzzer.is_excluded(response(body=b"x" * 2048)))
+        self.assertTrue(self.fuzzer.is_excluded(response(body=b"x" * 2049)))
 
     def test_size_words_lines_and_time_filters(self):
         options["match_sizes"] = parse_numeric_ranges("10-20")

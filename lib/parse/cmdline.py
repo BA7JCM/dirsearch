@@ -306,7 +306,7 @@ def parse_arguments() -> Values:
         action="store",
         dest="exclude_sizes",
         metavar="SIZES",
-        help="Exclude responses by sizes, separated by commas (e.g. 0B,4KB)",
+        help="Exclude responses by sizes, separated by commas (e.g. 0,0B,4KB)",
     )
     general.add_option(
         "--exclude-text",
@@ -346,18 +346,16 @@ def parse_arguments() -> Values:
     general.add_option(
         "--min-response-size",
         action="store",
-        type="int",
         dest="minimum_response_size",
-        help="Minimum response length",
+        help="Minimum response length (e.g. 1024,1KB)",
         metavar="LENGTH",
         default=0,
     )
     general.add_option(
         "--max-response-size",
         action="store",
-        type="int",
         dest="maximum_response_size",
-        help="Maximum response length",
+        help="Maximum response length (e.g. 1024,1KB)",
         metavar="LENGTH",
         default=0,
     )

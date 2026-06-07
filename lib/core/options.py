@@ -43,6 +43,8 @@ from lib.core.native_runtime import (
 )
 from lib.core.filters import (
     parse_numeric_ranges,
+    parse_size,
+    parse_size_list,
     parse_time_filters,
     validate_regex,
 )
@@ -275,7 +277,15 @@ def parse_options() -> dict[str, Any]:
             ]
         )
     ]
-    opt.exclude_sizes = {size.strip().upper() for size in opt.exclude_sizes.split(",")}
+    opt.exclude_sizes = _parse_size_list(opt.exclude_sizes, "--exclude-sizes")
+    opt.minimum_response_size = _parse_size(
+        opt.minimum_response_size,
+        "--min-response-size",
+    )
+    opt.maximum_response_size = _parse_size(
+        opt.maximum_response_size,
+        "--max-response-size",
+    )
 
     if opt.extensions == "*":
         opt.extensions = COMMON_EXTENSIONS
@@ -403,6 +413,22 @@ def _parse_advanced_ranges(value: str | None, option_name: str) -> tuple[tuple[i
 def _parse_advanced_times(value: str | None, option_name: str) -> tuple[tuple[str, float], ...]:
     try:
         return parse_time_filters(value)
+    except ValueError as error:
+        print(f"{option_name}: {error}")
+        sys.exit(1)
+
+
+def _parse_size(value: str | int | None, option_name: str) -> int:
+    try:
+        return parse_size(value)
+    except ValueError as error:
+        print(f"{option_name}: {error}")
+        sys.exit(1)
+
+
+def _parse_size_list(value: str | None, option_name: str) -> set[int]:
+    try:
+        return parse_size_list(value)
     except ValueError as error:
         print(f"{option_name}: {error}")
         sys.exit(1)
