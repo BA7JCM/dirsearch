@@ -487,6 +487,34 @@ def parse_arguments() -> Values:
         help="Advanced filter for response body regular expression",
     )
     advanced_filtering.add_option(
+        "--match-header",
+        action="append",
+        dest="match_headers",
+        metavar="TEXT",
+        help="Advanced matcher for response headers by text, can use multiple flags",
+    )
+    advanced_filtering.add_option(
+        "--filter-header",
+        action="append",
+        dest="filter_headers",
+        metavar="TEXT",
+        help="Advanced filter for response headers by text, can use multiple flags",
+    )
+    advanced_filtering.add_option(
+        "--match-header-regex",
+        action="store",
+        dest="match_header_regex",
+        metavar="REGEX",
+        help="Advanced matcher for response headers regular expression",
+    )
+    advanced_filtering.add_option(
+        "--filter-header-regex",
+        action="store",
+        dest="filter_header_regex",
+        metavar="REGEX",
+        help="Advanced filter for response headers regular expression",
+    )
+    advanced_filtering.add_option(
         "--match-time",
         "--mt",
         action="store",

@@ -257,6 +257,8 @@ def parse_options() -> dict[str, Any]:
     _validate_advanced_mode(opt.filter_mode, "--filter-mode")
     _validate_advanced_regex(opt.match_regex, "--match-regex")
     _validate_advanced_regex(opt.filter_regex, "--filter-regex")
+    _validate_advanced_regex(opt.match_header_regex, "--match-header-regex")
+    _validate_advanced_regex(opt.filter_header_regex, "--filter-header-regex")
     opt.prefixes = tuple(strip_and_uniquify(opt.prefixes.split(",")))
     opt.suffixes = tuple(strip_and_uniquify(opt.suffixes.split(",")))
     opt.subdirs = [
@@ -645,6 +647,18 @@ def merge_config(opt: Values) -> Values:
     )
     opt.filter_regex = opt.filter_regex or config.safe_get(
         "advanced-filtering", "filter-regex"
+    )
+    opt.match_headers = opt.match_headers or config.safe_getlist(
+        "advanced-filtering", "match-header"
+    )
+    opt.filter_headers = opt.filter_headers or config.safe_getlist(
+        "advanced-filtering", "filter-header"
+    )
+    opt.match_header_regex = opt.match_header_regex or config.safe_get(
+        "advanced-filtering", "match-header-regex"
+    )
+    opt.filter_header_regex = opt.filter_header_regex or config.safe_get(
+        "advanced-filtering", "filter-header-regex"
     )
     opt.match_time = opt.match_time or config.safe_get(
         "advanced-filtering", "match-time", ""
