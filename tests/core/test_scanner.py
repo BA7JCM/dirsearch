@@ -17,6 +17,7 @@
 #  Author: Mauro Soria
 
 from unittest import TestCase
+from unittest.mock import patch
 
 from lib.connection.response import NativeResponse
 from lib.core.data import options
@@ -89,3 +90,56 @@ class TestScanner(TestCase):
         )
 
         self.assertTrue(scanner.check("admin", response))
+
+    def test_probable_wildcard_skips_expensive_similarity_for_large_bodies(self):
+        class DummyParser:
+            static_patterns = ()
+            is_ambiguous = True
+
+        large_body = b"a" * 270000
+        scanner = BaseScanner(None)
+        scanner.response = NativeResponse(
+            "https://example.com/random",
+            200,
+            [("content-type", "text/html")],
+            large_body,
+        )
+        scanner.content_parser = DummyParser()
+        response = NativeResponse(
+            "https://example.com/admin",
+            200,
+            [("content-type", "text/html")],
+            large_body,
+        )
+
+        with patch(
+            "lib.core.scanner.content_similarity",
+            side_effect=AssertionError("expensive similarity should be skipped"),
+        ):
+            self.assertFalse(scanner.is_probable_wildcard("admin", response))
+
+    def test_probable_wildcard_keeps_similarity_for_medium_bodies(self):
+        class DummyParser:
+            static_patterns = ()
+            is_ambiguous = True
+
+        medium_body = b"a" * 70000
+        scanner = BaseScanner(None)
+        scanner.response = NativeResponse(
+            "https://example.com/random",
+            200,
+            [("content-type", "text/html")],
+            medium_body,
+        )
+        scanner.content_parser = DummyParser()
+        response = NativeResponse(
+            "https://example.com/admin",
+            200,
+            [("content-type", "text/html")],
+            medium_body,
+        )
+
+        with patch("lib.core.scanner.content_similarity", return_value=1) as similarity:
+            self.assertTrue(scanner.is_probable_wildcard("admin", response))
+
+        similarity.assert_called_once()
