@@ -16,11 +16,11 @@ class DummyDictionary:
         raise StopIteration
 
 
-def response(path="admin", status=200, body=b"admin panel", elapsed=0.0):
+def response(path="admin", status=200, body=b"admin panel", elapsed=0.0, headers=None):
     return NativeResponse(
         f"https://example.com/{path}",
         status,
-        [("content-type", "text/plain")],
+        headers or [("content-type", "text/plain")],
         body,
         elapsed=elapsed,
     )
@@ -54,6 +54,10 @@ class TestAdvancedFilters(TestCase):
                 "filter_lines": (),
                 "match_regex": None,
                 "filter_regex": None,
+                "match_headers": [],
+                "filter_headers": [],
+                "match_header_regex": None,
+                "filter_header_regex": None,
                 "match_time": (),
                 "filter_time": (),
             }
@@ -84,6 +88,59 @@ class TestAdvancedFilters(TestCase):
 
         self.assertTrue(self.fuzzer.is_excluded(response(body=b"not found")))
         self.assertFalse(self.fuzzer.is_excluded(response(body=b"admin panel")))
+
+    def test_header_text_matchers_are_case_insensitive(self):
+        options["match_headers"] = ["etag: w/\"123"]
+
+        self.assertFalse(
+            self.fuzzer.is_excluded(
+                response(headers=[("ETag", 'W/"123-abc"')])
+            )
+        )
+        self.assertTrue(
+            self.fuzzer.is_excluded(
+                response(headers=[("X-Cache", "real")])
+            )
+        )
+
+    def test_header_text_filters_exclude_matching_responses(self):
+        options["filter_headers"] = ["x-cache: fallback"]
+
+        self.assertTrue(
+            self.fuzzer.is_excluded(
+                response(headers=[("X-Cache", "fallback")])
+            )
+        )
+        self.assertFalse(
+            self.fuzzer.is_excluded(
+                response(headers=[("X-Cache", "real")])
+            )
+        )
+
+    def test_header_regex_matchers_and_filters(self):
+        options["match_header_regex"] = r"ETag: W/\"[0-9]+"
+        options["filter_header_regex"] = r"X-Cache: fallback-[0-9]+"
+
+        self.assertFalse(
+            self.fuzzer.is_excluded(
+                response(
+                    headers=[
+                        ("ETag", 'W/"123-abc"'),
+                        ("X-Cache", "real"),
+                    ]
+                )
+            )
+        )
+        self.assertTrue(
+            self.fuzzer.is_excluded(
+                response(
+                    headers=[
+                        ("ETag", 'W/"123-abc"'),
+                        ("X-Cache", "fallback-404"),
+                    ]
+                )
+            )
+        )
 
     def test_parse_response_sizes(self):
         self.assertEqual(parse_size("1024"), 1024)

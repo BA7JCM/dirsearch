@@ -157,6 +157,18 @@ Options:
                         Advanced matcher for response body regular expression
     --filter-regex=REGEX, --fr=REGEX
                         Advanced filter for response body regular expression
+    --match-header=TEXT
+                        Advanced matcher for response headers by text, can use
+                        multiple flags
+    --filter-header=TEXT
+                        Advanced filter for response headers by text, can use
+                        multiple flags
+    --match-header-regex=REGEX
+                        Advanced matcher for response headers regular
+                        expression
+    --filter-header-regex=REGEX
+                        Advanced filter for response headers regular
+                        expression
     --match-time=TIME, --mt=TIME
                         Advanced matcher for elapsed milliseconds, e.g. >100
                         or <100

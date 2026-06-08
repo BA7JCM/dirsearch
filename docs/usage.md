@@ -113,6 +113,14 @@ Advanced ffuf/wfuzz-style filters are available as opt-in controls, not as the m
 python3 dirsearch.py -u https://target --match-status 200-299 --filter-regex "not found"
 ```
 
+Response headers can also be used in advanced filters. Header text matching is
+case-insensitive; header regex matching uses regular expressions:
+
+```sh
+python3 dirsearch.py -u https://target --filter-header "x-cache: fallback"
+python3 dirsearch.py -u https://target --match-header-regex "etag: W/.+"
+```
+
 ## Raw Requests
 
 dirsearch can import a raw request from a file:
