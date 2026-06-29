@@ -4319,6 +4319,7 @@ dat.zip
 data
 data-nseries.tsv
 data.mdb
+data.php
 data.sql
 data.sqlite
 data.tsv
@@ -5954,8 +5955,8 @@ listinfo
 lists
 lists/
 lists/config
-livewire/update
 LiveUser_Admin/
+livewire/update
 lk/
 llms.txt
 load.php
