@@ -3,7 +3,7 @@
 ## Summary
 
 - A wordlist is a text file where each line is a path.
-- Unlike other tools, dirsearch only replaces the `%EXT%` keyword with extensions from the `-e` flag.
+- In ordinary wordlists, dirsearch replaces the `%EXT%` keyword with extensions from the `-e` flag.
 - For wordlists without `%EXT%`, such as [SecLists](https://github.com/danielmiessler/SecLists), use `-f` / `--force-extensions` to append extensions and `/` to every wordlist entry.
 - To apply selected extensions to entries that already have extensions, use `--overwrite-extensions`.
 - Some extensions are excluded from overwrite behavior, such as `.log`, `.json`, `.xml`, and media extensions like `.jpg` and `.png`.
@@ -83,17 +83,26 @@ python3 dirsearch.py -u https://target --wordlist-categories all
 
 ## Templates
 
-Template wordlists live in `db/templates/` and support placeholders such as:
+Template wordlists live in `db/templates/` and support these placeholders:
 
-- `%SUBJECT%`
-- `%CRUD_OP%`
-- `%AUTH_OP%`
-- `%ADMIN_OP%`
-- `%ENV%`
-- `%DATE%`
-- `%API_VERSION%`
-- `%CATEGORY:name%`
-- `%EXT%`
+- `%EXT%`: extensions supplied with `-e` / `--extensions`.
+- `%SUBJECT%`: common resources such as users, accounts, posts, products, orders, and invoices.
+- `%CRUD_OP%`: create, read, update, delete, list, get, add, edit, remove, and search.
+- `%AUTH_OP%`: login, logout, signin, signout, signup, register, reset, forgot, password, oauth, and sso.
+- `%ADMIN_OP%`: admin, dashboard, panel, manage, settings, users, roles, and permissions.
+- `%ENV%`: dev, development, test, stage, staging, prod, production, and local.
+- `%SEP%`: separators `-`, `_`, `.`, and `/`.
+- `%DB%` and its compatibility alias `%DB_ENGINE%`: mysql, postgres, postgresql, sqlite, mariadb, mongodb, and redis.
+- `%ARCHIVE%` and its compatibility alias `%ARCHIVE_EXT%`: zip, tar, tar.gz, tgz, gz, 7z, rar, and bak.
+- `%API_VERSION%`: v1, v2, v3, v4, latest, and beta.
+- `%YYYY%`, `%YY%`, `%MM%`, and `%DD%`: components of the current date when the wordlist is generated.
+- `%DATE%`: the current date in `YYYY-MM-DD` form.
+- `%DATE_COMPACT%`: the current date in `YYYYMMDD` form.
+- `%CATEGORY:name%`: entries from `db/categories/name.txt` or a mapped bundled category.
+
+Repeated placeholders reuse the same value within a line. Distinct placeholders
+expand as a Cartesian product, unknown placeholders remain unchanged, and
+placeholders with no values emit no entries.
 
 Preview resolved files and generated entry counts without scanning:
 

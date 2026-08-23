@@ -50,6 +50,7 @@ from tests.core.test_native_fuzzer import TestNativeFuzzer  # noqa: F401
 from tests.core.test_request_backend import TestRequestBackend  # noqa: F401
 from tests.core.test_scanner import TestScanner  # noqa: F401
 from tests.core.test_wordlist_backend import TestWordlistBackend  # noqa: F401
+from tests.parse.test_cmdline import TestCommandLineHelp  # noqa: F401
 from tests.parse.test_config import TestConfigParser  # noqa: F401
 from tests.parse.test_headers import TestHeadersParser  # noqa: F401
 from tests.parse.test_rawrequest import TestRawRequestParser  # noqa: F401

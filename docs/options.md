@@ -1,11 +1,15 @@
 # CLI Options
 
+Use `-h` or `--help` for common options. The complete reference below is
+available from `-hh` or `--help-all`.
+
 ```text
 Usage: dirsearch.py [-u|--url] target [-e|--extensions] extensions [options]
 
 Options:
   --version             show program's version number and exit
-  -h, --help            show this help message and exit
+  -h, --help            Show common options and exit
+  --help-all            Show all options and exit (short form: -hh)
 
   Mandatory:
     -u URL, --url=URL   Target URL(s), can use multiple flags
