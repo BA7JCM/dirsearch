@@ -1,6 +1,7 @@
 from unittest import TestCase
 from lib.connection.response import NativeResponse
 from lib.core.data import blacklists, options
+from lib.core.dictionary import Dictionary
 from lib.core.exceptions import RequestException
 from lib.core.fuzzer import NativeFuzzer
 
@@ -19,6 +20,12 @@ class DummyDictionary:
     def __len__(self):
         return len(self.paths)
 
+    def claim_next(self):
+        return next(self)
+
+    def release_claim(self, path):
+        return None
+
 
 class DummyRequester:
     _url = "https://example.com/"
@@ -32,6 +39,16 @@ class FakeNativeBackend:
     def scan(self, base_url, paths, query=""):
         self.calls.append((base_url, list(paths), query))
         yield from self.items
+
+
+def make_dictionary(paths):
+    dictionary = object.__new__(Dictionary)
+    dictionary._items = list(paths)
+    dictionary._index = 0
+    dictionary._extra = []
+    dictionary._extra_index = 0
+    dictionary._claimed = []
+    return dictionary
 
 
 class TestNativeFuzzer(TestCase):
@@ -151,3 +168,17 @@ class TestNativeFuzzer(TestCase):
         self.assertEqual(misses, [response])
         self.assertEqual(errors, [])
         self.assertEqual(response.length, 64)
+
+    def test_saved_state_retries_unreturned_chunk_paths(self):
+        dictionary = make_dictionary(["admin", "login"])
+        backend = FakeNativeBackend([])
+        fuzzer = self.make_fuzzer(backend, dictionary, [], [], [])
+
+        fuzzer.start()
+        saved_state = dictionary.__getstate__()
+
+        resumed = object.__new__(Dictionary)
+        resumed.__setstate__(saved_state)
+        self.assertEqual([next(resumed), next(resumed)], ["admin", "login"])
+        with self.assertRaises(StopIteration):
+            next(resumed)

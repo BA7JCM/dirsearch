@@ -514,15 +514,19 @@ class NativeFuzzer(Fuzzer):
                 ):
                     if self._quit_event.is_set():
                         break
-                    if error is not None:
-                        for callback in self.error_callbacks:
-                            callback(error)
-                        continue
-                    if response.filtered:
-                        for callback in self.not_found_callbacks:
-                            callback(response)
-                        continue
-                    self.process_response(path, response)
+                    try:
+                        if error is not None:
+                            for callback in self.error_callbacks:
+                                callback(error)
+                            continue
+                        if response.filtered:
+                            for callback in self.not_found_callbacks:
+                                callback(response)
+                            continue
+                        self.process_response(path, response)
+                    finally:
+                        dictionary_path = lstrip_once(path, self._base_path)
+                        self._dictionary.release_claim(dictionary_path)
         finally:
             self._finished = True
 
@@ -531,7 +535,7 @@ class NativeFuzzer(Fuzzer):
         paths = []
         for _ in range(chunk_size):
             try:
-                paths.append(self._base_path + next(self._dictionary))
+                paths.append(self._base_path + self._dictionary.claim_next())
             except StopIteration:
                 break
         return paths
@@ -636,11 +640,14 @@ class AsyncFuzzer(BaseFuzzer):
             await self._play_event.wait()
 
             try:
-                path = next(self._dictionary)
+                path = self._dictionary.claim_next()
             except StopIteration:
                 return
 
-            async with self.sem:
-                await self.scan(self._base_path + path)
+            try:
+                async with self.sem:
+                    await self.scan(self._base_path + path)
+            finally:
+                self._dictionary.release_claim(path)
 
             await asyncio.sleep(options["delay"])
