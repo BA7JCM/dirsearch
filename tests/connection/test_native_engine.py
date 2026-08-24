@@ -22,6 +22,8 @@ class StalledHTTPServer:
         self.listener.bind(("127.0.0.1", 0))
         self.listener.listen()
         self.release = threading.Event()
+        self.accepted = threading.Event()
+        self.peer_closed = threading.Event()
         self.thread = threading.Thread(target=self._serve, daemon=True)
         self.thread.start()
 
@@ -34,7 +36,15 @@ class StalledHTTPServer:
         try:
             connection, _ = self.listener.accept()
             with connection:
-                self.release.wait(timeout=5)
+                self.accepted.set()
+                connection.settimeout(0.05)
+                while not self.release.is_set():
+                    try:
+                        if connection.recv(4096) == b"":
+                            self.peer_closed.set()
+                            return
+                    except TimeoutError:
+                        continue
         except OSError:
             pass
 
@@ -42,6 +52,65 @@ class StalledHTTPServer:
         self.release.set()
         self.listener.close()
         self.thread.join(timeout=1)
+
+
+class RawResponseServer:
+    def __init__(self, response):
+        self.response = response
+        self.request_target = None
+        self.listener = socket.socket()
+        self.listener.bind(("127.0.0.1", 0))
+        self.listener.listen()
+        self.thread = threading.Thread(target=self._serve, daemon=True)
+        self.thread.start()
+
+    @property
+    def url(self):
+        host, port = self.listener.getsockname()
+        return f"http://{host}:{port}/"
+
+    def _serve(self):
+        try:
+            connection, _ = self.listener.accept()
+            with connection:
+                request = bytearray()
+                while b"\r\n\r\n" not in request:
+                    chunk = connection.recv(4096)
+                    if not chunk:
+                        return
+                    request.extend(chunk)
+                self.request_target = request.split(b" ", 2)[1].decode("ascii")
+                connection.sendall(self.response)
+        except OSError:
+            pass
+
+    def close(self):
+        self.listener.close()
+        self.thread.join(timeout=1)
+
+
+class SlowBodyServer(RawResponseServer):
+    def __init__(self):
+        super().__init__(b"")
+
+    def _serve(self):
+        try:
+            connection, _ = self.listener.accept()
+            with connection:
+                request = bytearray()
+                while b"\r\n\r\n" not in request:
+                    chunk = connection.recv(4096)
+                    if not chunk:
+                        return
+                    request.extend(chunk)
+                connection.sendall(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n"
+                )
+                for _ in range(100):
+                    connection.sendall(b"x")
+                    time.sleep(0.05)
+        except OSError:
+            pass
 
 
 class KeepAliveHandler(BaseHTTPRequestHandler):
@@ -130,6 +199,136 @@ class TestNativeHttpEngine(TestCase):
 
         self.assertEqual(results, [])
         self.assertLess(elapsed, 2)
+
+    def test_explicit_cancellation_closes_raw_fallback_socket(self):
+        server = StalledHTTPServer()
+        engine = dirsearch_native.NativeHttpEngine(timeout_secs=5)
+        cancel_timer = threading.Timer(0.1, engine.cancel)
+
+        try:
+            cancel_timer.start()
+            started = time.monotonic()
+            results = engine.scan(server.url, ["slow%1"])
+            elapsed = time.monotonic() - started
+            peer_closed = server.peer_closed.wait(timeout=1)
+        finally:
+            cancel_timer.join(timeout=1)
+            server.close()
+
+        self.assertEqual(results, [])
+        self.assertLess(elapsed, 2)
+        self.assertTrue(peer_closed)
+
+    def test_raw_fallback_uses_end_to_end_timeout(self):
+        server = StalledHTTPServer()
+        engine = dirsearch_native.NativeHttpEngine(timeout_secs=0.2)
+
+        try:
+            started = time.monotonic()
+            results = engine.scan(server.url, ["slow%1"])
+            elapsed = time.monotonic() - started
+        finally:
+            server.close()
+
+        self.assertEqual(len(results), 1)
+        self.assertIsNotNone(results[0].error)
+        self.assertIn("timed out", results[0].error.lower())
+        self.assertLess(elapsed, 2)
+
+    def test_raw_fallback_timeout_is_not_reset_by_slow_body_bytes(self):
+        server = SlowBodyServer()
+        engine = dirsearch_native.NativeHttpEngine(timeout_secs=0.2)
+
+        try:
+            started = time.monotonic()
+            results = engine.scan(server.url, ["slow%1"])
+            elapsed = time.monotonic() - started
+        finally:
+            server.close()
+
+        self.assertEqual(len(results), 1)
+        self.assertIsNotNone(results[0].error)
+        self.assertIn("timed out", results[0].error.lower())
+        self.assertLess(elapsed, 1)
+
+    def test_raw_fallback_decodes_chunked_body_before_capping(self):
+        server = RawResponseServer(
+            b"HTTP/1.1 200 OK\r\n"
+            b"Transfer-Encoding: chunked\r\n"
+            b"Connection: close\r\n\r\n"
+            b"4\r\nWiki\r\n5\r\npedia\r\n0\r\n\r\n"
+        )
+        engine = dirsearch_native.NativeHttpEngine(timeout_secs=1)
+
+        try:
+            results = engine.scan(server.url, ["chunked%1"], max_body_size=4)
+        finally:
+            server.close()
+
+        self.assertEqual(server.request_target, "/chunked%1")
+        self.assertIsNone(results[0].error)
+        self.assertEqual(results[0].body, b"Wiki")
+        self.assertEqual(results[0].length, 9)
+
+    def test_raw_fallback_decodes_gzip_before_body_matching(self):
+        compressed = bytes(
+            [
+                31,
+                139,
+                8,
+                0,
+                0,
+                0,
+                0,
+                0,
+                2,
+                3,
+                203,
+                72,
+                205,
+                201,
+                201,
+                87,
+                40,
+                207,
+                47,
+                202,
+                73,
+                1,
+                0,
+                133,
+                17,
+                74,
+                13,
+                11,
+                0,
+                0,
+                0,
+            ]
+        )
+        server = RawResponseServer(
+            b"HTTP/1.1 200 OK\r\n"
+            b"Content-Encoding: gzip\r\n"
+            + f"Content-Length: {len(compressed)}\r\n".encode()
+            + b"Connection: close\r\n\r\n"
+            + compressed
+        )
+        engine = dirsearch_native.NativeHttpEngine(timeout_secs=1)
+
+        try:
+            results = engine.scan(
+                server.url,
+                ["gzip%1"],
+                matcher_mode="and",
+                match_words=[(2, 2)],
+                match_regex="hello world",
+            )
+        finally:
+            server.close()
+
+        self.assertIsNone(results[0].error)
+        self.assertFalse(results[0].filtered)
+        self.assertEqual(results[0].body, b"hello world")
 
     def test_python_signal_interrupts_active_scan(self):
         server = StalledHTTPServer()

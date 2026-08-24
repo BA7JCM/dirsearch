@@ -1,3 +1,5 @@
+mod raw_http;
+
 use indexmap::IndexSet;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
@@ -5,8 +7,8 @@ use rayon::prelude::*;
 use regex::{Regex, RegexBuilder};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use std::fs;
-use std::io::{Read, Write};
-use std::net::TcpStream;
+#[cfg(test)]
+use std::io::Cursor;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -51,7 +53,17 @@ struct NativeHttpEngine {
 type NumericRange = (usize, usize);
 type TimeFilter = (String, f64);
 type HeaderPairs = Vec<(String, String)>;
-type RawHttpResponse = (u16, HeaderPairs, Vec<u8>, usize);
+type RawHttpResponse = raw_http::Response;
+
+struct RawHttpRequest<'a> {
+    base_url: &'a str,
+    path: String,
+    headers: &'a HeaderPairs,
+    timeout_secs: f64,
+    max_body_size: usize,
+    start: Instant,
+    cancelled: Arc<AtomicBool>,
+}
 
 #[derive(Clone, Eq, PartialEq)]
 struct NativeHttpEngineConfig {
@@ -665,6 +677,7 @@ impl NativeHttpEngine {
                     let raw_headers = raw_headers.clone();
                     let semaphore = semaphore.clone();
                     let filter_config = filter_config.clone();
+                    let request_cancelled = cancelled.clone();
                     tasks.spawn(async move {
                         let _permit = match semaphore.acquire_owned().await {
                             Ok(permit) => permit,
@@ -685,27 +698,19 @@ impl NativeHttpEngine {
                             let raw_base_url = base_url.clone();
                             let raw_path = path.clone();
                             let raw_filter_config = filter_config.clone();
-                            let raw_result = tokio::task::spawn_blocking(move || {
-                                raw_http_get(
-                                    &raw_base_url,
-                                    raw_path,
-                                    &raw_headers,
+                            raw_http_get(
+                                RawHttpRequest {
+                                    base_url: &raw_base_url,
+                                    path: raw_path,
+                                    headers: &raw_headers,
                                     timeout_secs,
                                     max_body_size,
                                     start,
-                                    raw_filter_config.as_ref(),
-                                )
-                            })
-                            .await;
-
-                            match raw_result {
-                                Ok(result) => result,
-                                Err(error) => native_error_result(
-                                    path,
-                                    start.elapsed().as_secs_f64() * 1000.0,
-                                    error.to_string(),
-                                ),
-                            }
+                                    cancelled: request_cancelled,
+                                },
+                                raw_filter_config.as_ref(),
+                            )
+                            .await
                         } else {
                             request_with_client(
                                 &client,
@@ -1100,37 +1105,30 @@ fn has_malformed_percent_escape(path: &str) -> bool {
     false
 }
 
-fn raw_http_get(
-    base_url: &str,
-    path: String,
-    headers: &[(String, String)],
-    timeout_secs: f64,
-    max_body_size: usize,
-    start: Instant,
+async fn raw_http_get(
+    request: RawHttpRequest<'_>,
     filter_config: &NativeFilterConfig,
 ) -> NativeHttpResult {
-    match raw_http_get_inner(base_url, &path, headers, timeout_secs, max_body_size) {
+    match raw_http_get_inner(&request).await {
         Ok((status, headers, body, length)) => native_http_result_with_length(
-            path,
+            request.path,
             status,
             headers,
             body,
             length,
-            start.elapsed().as_secs_f64() * 1000.0,
+            request.start.elapsed().as_secs_f64() * 1000.0,
             filter_config,
         ),
-        Err(error) => native_error_result(path, start.elapsed().as_secs_f64() * 1000.0, error),
+        Err(error) => native_error_result(
+            request.path,
+            request.start.elapsed().as_secs_f64() * 1000.0,
+            error,
+        ),
     }
 }
 
-fn raw_http_get_inner(
-    base_url: &str,
-    path: &str,
-    headers: &[(String, String)],
-    timeout_secs: f64,
-    max_body_size: usize,
-) -> Result<RawHttpResponse, String> {
-    let url = reqwest::Url::parse(base_url).map_err(|error| error.to_string())?;
+async fn raw_http_get_inner(request: &RawHttpRequest<'_>) -> Result<RawHttpResponse, String> {
+    let url = reqwest::Url::parse(request.base_url).map_err(|error| error.to_string())?;
     if url.scheme() != "http" {
         return Err("Raw HTTP path preservation only supports http:// URLs".to_string());
     }
@@ -1146,35 +1144,50 @@ fn raw_http_get_inner(
         Some(port) => format!("{host}:{port}"),
         None => host.clone(),
     };
-    let timeout = Duration::from_secs_f64(timeout_secs);
-    let mut stream =
-        TcpStream::connect((host.as_str(), port)).map_err(|error| error.to_string())?;
-    stream
-        .set_read_timeout(Some(timeout))
-        .map_err(|error| error.to_string())?;
-    stream
-        .set_write_timeout(Some(timeout))
-        .map_err(|error| error.to_string())?;
-
-    let target = raw_request_target(url.path(), path);
-    let mut request =
+    let target = raw_request_target(url.path(), &request.path);
+    let mut wire_request =
         format!("GET {target} HTTP/1.1\r\nHost: {host_header}\r\nConnection: close\r\n");
-    for (name, value) in headers {
-        request.push_str(name);
-        request.push_str(": ");
-        request.push_str(value);
-        request.push_str("\r\n");
+    for (name, value) in request.headers {
+        wire_request.push_str(name);
+        wire_request.push_str(": ");
+        wire_request.push_str(value);
+        wire_request.push_str("\r\n");
     }
-    request.push_str("\r\n");
-    stream
-        .write_all(request.as_bytes())
-        .map_err(|error| error.to_string())?;
+    wire_request.push_str("\r\n");
 
-    let mut raw_response = Vec::new();
+    let timeout = Duration::from_secs_f64(request.timeout_secs);
+    let deadline = request
+        .start
+        .checked_add(timeout)
+        .ok_or_else(|| "Raw HTTP timeout exceeded the supported duration".to_string())?;
+    let stream = tokio::time::timeout_at(
+        tokio::time::Instant::from_std(deadline),
+        tokio::net::TcpStream::connect((host.as_str(), port)),
+    )
+    .await
+    .map_err(|_| "Raw HTTP connection timed out".to_string())?
+    .map_err(|error| error.to_string())?;
+    let stream = stream.into_std().map_err(|error| error.to_string())?;
     stream
-        .read_to_end(&mut raw_response)
+        .set_nonblocking(false)
         .map_err(|error| error.to_string())?;
-    parse_raw_http_response(raw_response, max_body_size)
+    let shutdown_stream = stream.try_clone().map_err(|error| error.to_string())?;
+    let mut shutdown_guard = raw_http::ShutdownOnDrop::new(shutdown_stream);
+    let cancelled = request.cancelled.clone();
+    let max_body_size = request.max_body_size;
+    let exchange = tokio::task::spawn_blocking(move || {
+        raw_http::exchange(
+            stream,
+            wire_request.as_bytes(),
+            deadline,
+            cancelled,
+            max_body_size,
+        )
+    })
+    .await
+    .map_err(|error| error.to_string())?;
+    shutdown_guard.disarm();
+    exchange
 }
 
 fn raw_request_target(base_path: &str, path: &str) -> String {
@@ -1187,37 +1200,12 @@ fn raw_request_target(base_path: &str, path: &str) -> String {
     target
 }
 
+#[cfg(test)]
 fn parse_raw_http_response(
     raw_response: Vec<u8>,
     max_body_size: usize,
 ) -> Result<RawHttpResponse, String> {
-    let header_end = raw_response
-        .windows(4)
-        .position(|window| window == b"\r\n\r\n")
-        .ok_or_else(|| "HTTP response did not contain a header terminator".to_string())?;
-    let header_bytes = &raw_response[..header_end];
-    let body_start = header_end + 4;
-    let body_bytes = &raw_response[body_start..];
-    let header_text = String::from_utf8_lossy(header_bytes);
-    let mut lines = header_text.split("\r\n");
-    let status_line = lines
-        .next()
-        .ok_or_else(|| "HTTP response did not contain a status line".to_string())?;
-    let status = status_line
-        .split_whitespace()
-        .nth(1)
-        .ok_or_else(|| "HTTP response status line did not contain a status code".to_string())?
-        .parse::<u16>()
-        .map_err(|error| error.to_string())?;
-    let headers = lines
-        .filter_map(|line| {
-            line.split_once(':')
-                .map(|(name, value)| (name.to_string(), value.trim_start().to_string()))
-        })
-        .collect::<Vec<_>>();
-    let length = body_bytes.len();
-    let body = body_bytes[..length.min(max_body_size)].to_vec();
-    Ok((status, headers, body, length))
+    raw_http::parse_response(Cursor::new(raw_response), max_body_size)
 }
 
 fn read_lines(path: &str) -> PyResult<Vec<String>> {
@@ -1350,6 +1338,7 @@ fn apply_case(path: String, lowercase: bool, uppercase: bool, capitalization: bo
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
 
     fn default_filter_config() -> NativeFilterConfig {
         NativeFilterConfig::new(
@@ -1403,6 +1392,151 @@ mod tests {
             "https://example.com/",
             "admin%3d..%1\\*"
         ));
+    }
+
+    fn raw_response(headers: &str, body: &[u8]) -> Vec<u8> {
+        let mut response = format!("HTTP/1.1 200 OK\r\n{headers}\r\n\r\n").into_bytes();
+        response.extend_from_slice(body);
+        response
+    }
+
+    #[test]
+    fn raw_http_parser_decodes_chunked_body_and_tracks_decoded_length() {
+        let response = raw_response(
+            "Transfer-Encoding: chunked",
+            b"4\r\nWiki\r\n5; extension=yes\r\npedia\r\n0\r\nX-Trailer: done\r\n\r\n",
+        );
+
+        let (_, _, body, length) = parse_raw_http_response(response, 80).unwrap();
+
+        assert_eq!(body, b"Wikipedia");
+        assert_eq!(length, 9);
+    }
+
+    #[test]
+    fn raw_http_parser_caps_chunked_body_without_losing_decoded_length() {
+        let response = raw_response(
+            "Transfer-Encoding: chunked",
+            b"4\r\nWiki\r\n5\r\npedia\r\n0\r\n\r\n",
+        );
+
+        let (_, _, body, length) = parse_raw_http_response(response, 4).unwrap();
+
+        assert_eq!(body, b"Wiki");
+        assert_eq!(length, 9);
+    }
+
+    #[test]
+    fn raw_http_parser_honors_content_length_and_ignores_extra_bytes() {
+        let response = raw_response("Content-Length: 4", b"bodyEXTRA");
+
+        let (_, _, body, length) = parse_raw_http_response(response, 80).unwrap();
+
+        assert_eq!(body, b"body");
+        assert_eq!(length, 4);
+    }
+
+    #[test]
+    fn raw_http_parser_rejects_truncated_content_length() {
+        let response = raw_response("Content-Length: 5", b"four");
+
+        let error = parse_raw_http_response(response, 80).unwrap_err();
+
+        assert!(error.contains("ended before Content-Length"));
+    }
+
+    #[test]
+    fn raw_http_parser_rejects_truncated_chunked_body() {
+        let response = raw_response("Transfer-Encoding: chunked", b"5\r\nfour");
+
+        let error = parse_raw_http_response(response, 80).unwrap_err();
+
+        assert!(error.contains("chunked body"));
+    }
+
+    #[test]
+    fn raw_http_parser_decodes_gzip_before_body_filters() {
+        let gzip_hello_world = [
+            31, 139, 8, 0, 0, 0, 0, 0, 2, 3, 203, 72, 205, 201, 201, 87, 40, 207, 47, 202, 73, 1,
+            0, 133, 17, 74, 13, 11, 0, 0, 0,
+        ];
+        let response = raw_response(
+            &format!(
+                "Content-Encoding: gzip\r\nContent-Length: {}",
+                gzip_hello_world.len()
+            ),
+            &gzip_hello_world,
+        );
+
+        let (_, _, body, length) = parse_raw_http_response(response, 80).unwrap();
+
+        assert_eq!(body, b"hello world");
+        assert_eq!(length, 11);
+    }
+
+    #[test]
+    fn raw_http_parser_decodes_stacked_content_encodings() {
+        let mut gzip = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        gzip.write_all(b"hello world").unwrap();
+        let gzip = gzip.finish().unwrap();
+        let mut compressed = Vec::new();
+        {
+            let mut brotli = brotli::CompressorWriter::new(&mut compressed, 4096, 5, 22);
+            brotli.write_all(&gzip).unwrap();
+        }
+        let response = raw_response("Content-Encoding: gzip, br", &compressed);
+
+        let (_, _, body, length) = parse_raw_http_response(response, 80).unwrap();
+
+        assert_eq!(body, b"hello world");
+        assert_eq!(length, 11);
+    }
+
+    #[test]
+    fn raw_http_parser_decodes_zlib_wrapped_deflate() {
+        let mut deflate =
+            flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        deflate.write_all(b"hello world").unwrap();
+        let compressed = deflate.finish().unwrap();
+        let response = raw_response("Content-Encoding: deflate", &compressed);
+
+        let (_, _, body, length) = parse_raw_http_response(response, 80).unwrap();
+
+        assert_eq!(body, b"hello world");
+        assert_eq!(length, 11);
+    }
+
+    #[test]
+    fn raw_http_parser_rejects_ambiguous_message_framing() {
+        let response = raw_response(
+            "Content-Length: 4\r\nTransfer-Encoding: chunked",
+            b"4\r\nbody\r\n0\r\n\r\n",
+        );
+
+        let error = parse_raw_http_response(response, 80).unwrap_err();
+
+        assert!(error.contains("both Transfer-Encoding and Content-Length"));
+    }
+
+    #[test]
+    fn raw_http_parser_bounds_response_headers() {
+        let response = raw_response(&format!("X-Large: {}", "a".repeat(70 * 1024)), b"");
+
+        let error = parse_raw_http_response(response, 80).unwrap_err();
+
+        assert!(error.contains("HTTP header line exceeded"));
+    }
+
+    #[test]
+    fn raw_http_parser_skips_informational_response() {
+        let response =
+            b"HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok".to_vec();
+
+        let (status, _, body, length) = parse_raw_http_response(response, 80).unwrap();
+
+        assert_eq!(status, 200);
+        assert_eq!(body, b"ok");
+        assert_eq!(length, 2);
     }
 
     #[test]
