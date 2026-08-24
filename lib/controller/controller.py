@@ -455,13 +455,36 @@ class Controller:
                 self.old_session = False
 
     async def start_coroutines(self, start_time: float) -> None:
+        now = time.time()
+        time_limits = []
+
+        if options["max_time"] > 0:
+            time_limits.append(
+                (
+                    options["max_time"] - (now - self.start_time),
+                    QuitInterrupt("Runtime exceeded the maximum set by the user"),
+                )
+            )
+        if options["target_max_time"] > 0:
+            time_limits.append(
+                (
+                    options["target_max_time"] - (now - start_time),
+                    SkipTargetInterrupt(
+                        "Runtime for target exceeded the maximum set by the user"
+                    ),
+                )
+            )
+
+        for remaining, limit_error in time_limits:
+            if remaining <= 0:
+                raise limit_error
+
+        if time_limits:
+            timeout, timeout_error = min(time_limits, key=lambda limit: limit[0])
+        else:
+            timeout, timeout_error = None, None
+
         task = self.loop.create_task(self.fuzzer.start())
-        timeout = min(
-            t for t in [
-                options["max_time"] - (time.time() - self.start_time),
-                options["target_max_time"] - (time.time() - start_time),
-            ] if t > 0
-        ) if options["max_time"] or options["target_max_time"] else None
 
         try:
             try:
@@ -473,10 +496,9 @@ class Controller:
                     timeout=timeout,
                 )
             except asyncio.TimeoutError:
-                if time.time() - self.start_time > options["max_time"] > 0:
-                    raise QuitInterrupt("Runtime exceeded the maximum set by the user")
-
-                raise SkipTargetInterrupt("Runtime for target exceeded the maximum set by the user")
+                if timeout_error is None:
+                    raise
+                raise timeout_error
 
             if self.pause_future.done():
                 task.cancel()
