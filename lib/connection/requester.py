@@ -18,7 +18,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import http.client
 import random
 import re
@@ -51,6 +50,7 @@ from lib.connection.proxy import (
     format_proxy_error,
     proxy_error_status,
 )
+from lib.connection.rate_limiter import RequestRateLimiter
 from lib.connection.response import AsyncResponse, Response
 from lib.core.data import options
 from lib.core.decorators import cached
@@ -309,7 +309,7 @@ class BaseRequester:
     def __init__(self) -> None:
         self._url: str = ""
         self._query: str = ""
-        self._rate = 0
+        self._rate_limiter = RequestRateLimiter()
         self.proxy_cred = options["proxy_auth"]
         self.headers = CaseInsensitiveDict(options["headers"])
         self.agents: list[str] = []
@@ -353,20 +353,13 @@ class BaseRequester:
     def set_header(self, key: str, value: str) -> None:
         self.headers[key] = value.lstrip()
 
-    def is_rate_exceeded(self) -> bool:
-        return self._rate >= options["max_rate"] > 0
-
-    def decrease_rate(self) -> None:
-        self._rate -= 1
-
-    def increase_rate(self) -> None:
-        self._rate += 1
-        threading.Timer(1, self.decrease_rate).start()
+    def wait_for_rate_limit(self) -> None:
+        self._rate_limiter.wait(options["max_rate"])
 
     @property
     @cached(RATE_UPDATE_DELAY)
     def rate(self) -> int:
-        return self._rate
+        return self._rate_limiter.rate
 
 
 class HTTPBearerAuth(AuthBase):
@@ -418,11 +411,7 @@ class Requester(BaseRequester):
 
     # :path: is expected not to start with "/"
     def request(self, path: str, proxy: str | None = None) -> Response:
-        # Pause if the request rate exceeded the maximum
-        while self.is_rate_exceeded():
-            time.sleep(0.1)
-
-        self.increase_rate()
+        self.wait_for_rate_limit()
 
         err_msg = None
         request_path = self.request_path(path)
@@ -628,10 +617,7 @@ class AsyncRequester(BaseRequester):
     async def request(
         self, path: str, session: httpx.AsyncClient | None = None, replay: bool = False
     ) -> AsyncResponse:
-        while self.is_rate_exceeded():
-            await asyncio.sleep(0.1)
-
-        self.increase_rate()
+        await self.wait_for_rate_limit()
 
         err_msg = None
         request_path = self.request_path(path)
@@ -716,6 +702,5 @@ class AsyncRequester(BaseRequester):
 
         raise RequestException(err_msg)
 
-    def increase_rate(self) -> None:
-        self._rate += 1
-        asyncio.get_running_loop().call_later(1, self.decrease_rate)
+    async def wait_for_rate_limit(self) -> None:
+        await self._rate_limiter.wait_async(options["max_rate"])

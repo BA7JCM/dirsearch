@@ -30,6 +30,7 @@ import requests
 
 from lib.connection import requester as requester_module
 from lib.connection.native import NativeHTTPBackend
+from lib.connection.rate_limiter import RequestRateLimiter
 from lib.connection.requester import (
     AsyncRequester,
     Requester,
@@ -342,7 +343,7 @@ class TestRequesterErrorClassification(BaseRequesterTestCase):
 class TestRequesterElapsed(TestCase):
     def test_request_elapsed_includes_stream_read(self):
         requester = object.__new__(Requester)
-        requester._rate = 0
+        requester._rate_limiter = RequestRateLimiter()
         requester._url = "https://example.com/"
         requester.proxy_cred = None
         requester.headers = {}
@@ -354,6 +355,28 @@ class TestRequesterElapsed(TestCase):
                 response = requester.request("admin")
 
         self.assertEqual(response.elapsed, 0.25, "Sync elapsed should measure the full streamed request lifecycle")
+
+
+class TestRequesterRateLimiting(BaseRequesterTestCase):
+    def test_unlimited_requests_do_not_spawn_timer_threads(self):
+        requester = Requester()
+        requester.set_url("http://example.com/")
+
+        try:
+            with (
+                patch.object(
+                    requester.session,
+                    "send",
+                    return_value=DummySyncResponse(),
+                ),
+                patch.object(requester_module.threading, "Timer") as timer,
+            ):
+                for path in ("first", "second", "third"):
+                    requester.request(path)
+        finally:
+            requester.session.close()
+
+        timer.assert_not_called()
 
 
 class TestRequesterPathPreservation(BaseRequesterTestCase):
@@ -395,7 +418,7 @@ class TestRequesterProxyRouting(BaseRequesterTestCase):
                     requester.set_url(f"{target_scheme}://origin.invalid/")
 
                     with (
-                        patch.object(requester, "increase_rate"),
+                        patch.object(requester, "wait_for_rate_limit"),
                         patch.object(
                             requester.session,
                             "send",
@@ -493,7 +516,7 @@ class TestAsyncRequesterSSLHandling(BaseRequesterTestCase, IsolatedAsyncioTestCa
 class TestAsyncRequesterElapsed(IsolatedAsyncioTestCase):
     async def test_request_elapsed_waits_for_stream_close(self):
         requester = object.__new__(AsyncRequester)
-        requester._rate = 0
+        requester._rate_limiter = RequestRateLimiter()
         requester._url = "https://example.com/"
         requester.proxy_cred = None
         requester.headers = {}
