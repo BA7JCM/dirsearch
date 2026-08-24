@@ -137,3 +137,19 @@ class TestNativeHTTPBackend(TestCase):
         self.assertEqual(len(fake_native.engines), 1)
         self.assertEqual(len(fake_native.engines[0].calls), 2)
         self.assertTrue(fake_native.engines[0].cancelled)
+
+    def test_origin_407_remains_a_response_without_a_proxy(self):
+        fake_native = FakeNativeModule()
+        options["proxies"] = []
+
+        with (
+            patch.dict("sys.modules", {"dirsearch_native": fake_native}),
+            patch.object(FakeNativeResult, "status", 407),
+        ):
+            backend = NativeHTTPBackend()
+            rows = list(backend.scan("https://example.com/", ["admin"]))
+
+        self.assertEqual(len(rows), 1)
+        _, response, error = rows[0]
+        self.assertIsNone(error)
+        self.assertEqual(response.status, 407)

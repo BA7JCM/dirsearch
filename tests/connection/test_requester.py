@@ -279,6 +279,20 @@ class TestRequesterSSLHandling(BaseRequesterTestCase):
 
 
 class TestRequesterErrorClassification(BaseRequesterTestCase):
+    def test_sync_origin_407_remains_a_response_without_a_proxy(self):
+        requester = Requester()
+        requester.set_url("http://example.com/")
+        response = DummySyncResponse()
+        response.status_code = 407
+
+        try:
+            with patch.object(requester.session, "send", return_value=response):
+                result = requester.request("admin")
+        finally:
+            requester.session.close()
+
+        self.assertEqual(result.status, 407)
+
     def test_sync_too_many_redirects_uses_specific_message(self):
         requester = Requester()
         requester.set_url("http://example.com/")
@@ -399,6 +413,20 @@ class TestRequesterProxyRouting(BaseRequesterTestCase):
 
 
 class TestAsyncRequesterSSLHandling(BaseRequesterTestCase, IsolatedAsyncioTestCase):
+    async def test_async_origin_407_remains_a_response_without_a_proxy(self):
+        requester = AsyncRequester()
+        requester.set_url("http://example.com/")
+        response = DummyAsyncResponse()
+        response.status_code = 407
+        requester.session.send = AsyncMock(return_value=response)
+
+        try:
+            result = await requester.request("admin")
+        finally:
+            await requester.session.aclose()
+
+        self.assertEqual(result.status, 407)
+
     async def test_async_connect_error_with_ssl_cause_uses_ssl_message(self):
         requester = AsyncRequester()
         requester.set_url("https://example.com/")

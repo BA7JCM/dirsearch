@@ -23,6 +23,7 @@ from cryptography.x509.oid import NameOID
 IO_TIMEOUT = 3
 TUNNEL_TIMEOUT = 5
 LOCAL_HOSTS = {"127.0.0.1", "localhost"}
+PROXY_BEHAVIORS = {"forward", "drop", "rate_limit", "timeout"}
 
 
 class RecordingHTTPServer(socketserver.ThreadingMixIn, HTTPServer):
@@ -33,25 +34,77 @@ class RecordingHTTPServer(socketserver.ThreadingMixIn, HTTPServer):
     def __init__(self, server_address, handler_class):
         super().__init__(server_address, handler_class)
         self._events = []
+        self._proxy_authorizations = []
         self._events_lock = threading.Lock()
+        self._proxy_behavior = "forward"
+        self._required_proxy_authorization = None
+        self._stall_release = threading.Event()
 
     def record(self, method: str, target: str) -> None:
         with self._events_lock:
             self._events.append((method, target))
 
+    def record_proxy_authorization(self, authorization: str | None) -> None:
+        with self._events_lock:
+            self._proxy_authorizations.append(authorization)
+
     def clear_events(self) -> None:
         with self._events_lock:
             self._events.clear()
+            self._proxy_authorizations.clear()
 
     @property
     def events(self) -> list[tuple[str, str]]:
         with self._events_lock:
             return list(self._events)
 
+    @property
+    def proxy_authorizations(self) -> list[str | None]:
+        with self._events_lock:
+            return list(self._proxy_authorizations)
+
+    def configure_proxy(
+        self,
+        behavior: str = "forward",
+        required_authorization: str | None = None,
+    ) -> None:
+        if behavior not in PROXY_BEHAVIORS:
+            raise ValueError(f"Unsupported proxy behavior: {behavior}")
+
+        with self._events_lock:
+            previous_stall = self._stall_release
+            self._stall_release = threading.Event()
+            self._proxy_behavior = behavior
+            self._required_proxy_authorization = required_authorization
+        previous_stall.set()
+
+    def begin_proxy_request(
+        self,
+        method: str,
+        target: str,
+        authorization: str | None,
+    ) -> tuple[str, str | None, threading.Event]:
+        with self._events_lock:
+            self._events.append((method, target))
+            self._proxy_authorizations.append(authorization)
+            return (
+                self._proxy_behavior,
+                self._required_proxy_authorization,
+                self._stall_release,
+            )
+
+    def release_stalled_requests(self) -> None:
+        with self._events_lock:
+            stall_release = self._stall_release
+        stall_release.set()
+
 
 class TargetHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.server.record("GET", self.path)
+        self.server.record_proxy_authorization(
+            self.headers.get("Proxy-Authorization")
+        )
         body = f"reached:{self.path}".encode()
         self.send_response(200)
         self.send_header("Content-Type", "text/plain")
@@ -66,7 +119,9 @@ class TargetHandler(BaseHTTPRequestHandler):
 
 class ForwardProxyHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        self.server.record("GET", self.path)
+        if not self._begin_proxy_request("GET"):
+            return
+
         target = urlsplit(self.path)
         if (
             target.scheme != "http"
@@ -104,7 +159,9 @@ class ForwardProxyHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_CONNECT(self):
-        self.server.record("CONNECT", self.path)
+        if not self._begin_proxy_request("CONNECT"):
+            return
+
         host, separator, port = self.path.rpartition(":")
         if not separator or host not in LOCAL_HOSTS:
             self.send_error(403, "Proxy target is outside the local test stack")
@@ -129,6 +186,68 @@ class ForwardProxyHandler(BaseHTTPRequestHandler):
             self._relay(upstream)
         finally:
             upstream.close()
+
+    def _begin_proxy_request(self, method: str) -> bool:
+        behavior, required_authorization, stall_release = (
+            self.server.begin_proxy_request(
+                method,
+                self.path,
+                self.headers.get("Proxy-Authorization"),
+            )
+        )
+
+        if (
+            required_authorization is not None
+            and self.headers.get("Proxy-Authorization") != required_authorization
+        ):
+            self._send_proxy_response(
+                407,
+                b"proxy authentication required",
+                {"Proxy-Authenticate": 'Basic realm="dirsearch-test"'},
+            )
+            return False
+
+        if behavior == "timeout":
+            stall_release.wait(TUNNEL_TIMEOUT)
+            self.close_connection = True
+            return False
+
+        if behavior == "drop":
+            self.close_connection = True
+            try:
+                self.connection.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            self.connection.close()
+            return False
+
+        if behavior == "rate_limit":
+            self._send_proxy_response(
+                429,
+                b"proxy rate limit",
+                {
+                    "Proxy-Status": "dirsearch-test; error=connection_limit",
+                    "Retry-After": "1",
+                },
+            )
+            return False
+
+        return True
+
+    def _send_proxy_response(
+        self,
+        status: int,
+        body: bytes,
+        headers: dict[str, str],
+    ) -> None:
+        self.send_response(status)
+        for name, value in headers.items():
+            self.send_header(name, value)
+        self.send_header("Content-Type", "text/plain")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.wfile.write(body)
 
     def _relay(self, upstream: socket.socket) -> None:
         downstream = self.connection
@@ -203,10 +322,22 @@ class LocalHTTPServer:
     def events(self) -> list[tuple[str, str]]:
         return self.server.events
 
+    @property
+    def proxy_authorizations(self) -> list[str | None]:
+        return self.server.proxy_authorizations
+
     def clear_events(self) -> None:
         self.server.clear_events()
 
+    def configure_proxy(
+        self,
+        behavior: str = "forward",
+        required_authorization: str | None = None,
+    ) -> None:
+        self.server.configure_proxy(behavior, required_authorization)
+
     def close(self) -> None:
+        self.server.release_stalled_requests()
         self.server.shutdown()
         self.server.server_close()
         self.thread.join(timeout=IO_TIMEOUT)

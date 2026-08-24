@@ -3,6 +3,12 @@ from __future__ import annotations
 from collections.abc import Iterable, Iterator
 from typing import Any
 
+from lib.connection.proxy import (
+    PROXY_AUTHENTICATION_REQUIRED,
+    format_proxy_error,
+    is_proxy_connect_rejection,
+    proxy_error_status,
+)
 from lib.connection.response import NativeResponse
 from lib.core.data import options
 from lib.core.exceptions import RequestException
@@ -59,7 +65,23 @@ class NativeHTTPBackend:
 
         for path, quoted_path, result in zip(raw_paths, quoted_paths, results):
             if result.error is not None:
-                yield path, None, RequestException(result.error)
+                error_message = result.error
+                if (
+                    options["proxies"]
+                    and (
+                        proxy_error_status(error_message) is not None
+                        or is_proxy_connect_rejection(error_message)
+                    )
+                ):
+                    error_message = format_proxy_error(error_message)
+                yield path, None, RequestException(error_message)
+                continue
+
+            if (
+                options["proxies"]
+                and result.status == PROXY_AUTHENTICATION_REQUIRED
+            ):
+                yield path, None, RequestException("Proxy authentication required")
                 continue
 
             yield (
