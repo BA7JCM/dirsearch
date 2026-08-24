@@ -35,10 +35,14 @@ class FakeNativeBackend:
     def __init__(self, items):
         self.items = items
         self.calls = []
+        self.cancelled = False
 
     def scan(self, base_url, paths, query=""):
         self.calls.append((base_url, list(paths), query))
         yield from self.items
+
+    def cancel(self):
+        self.cancelled = True
 
 
 def make_dictionary(paths):
@@ -182,3 +186,11 @@ class TestNativeFuzzer(TestCase):
         self.assertEqual([next(resumed), next(resumed)], ["admin", "login"])
         with self.assertRaises(StopIteration):
             next(resumed)
+
+    def test_quit_cancels_active_native_engine(self):
+        backend = FakeNativeBackend([])
+        fuzzer = self.make_fuzzer(backend, DummyDictionary([]), [], [], [])
+
+        fuzzer.quit()
+
+        self.assertTrue(backend.cancelled)

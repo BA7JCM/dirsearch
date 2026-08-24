@@ -3,12 +3,15 @@
 This crate is an experimental Phase 5 native backend. It is opt-in for source
 installs and is included in `native-rust` release artifacts.
 
-It exposes two PyO3 functions:
+It exposes two PyO3 functions and a class:
 
 - `generate_wordlist(...)` for deterministic ordered wordlist generation.
-- `scan_http(...)` for batch HTTP GET requests using `reqwest` and `tokio`.
+- `NativeHttpEngine` for batch HTTP GET requests using `reqwest` and `tokio`.
+- `scan_http(...)` as the compatibility entrypoint backed by a cached engine.
 
-`scan_http(...)` also evaluates the cheap legacy status/size filters and the
+`NativeHttpEngine` keeps its Tokio runtime and HTTP clients alive across
+multiple batches and supports cooperative cancellation. Its `scan(...)` method
+also evaluates the cheap legacy status/size filters and the
 advanced match/filter options in native code. Filtered responses are returned as
 lightweight events with metadata and an empty body so Python can keep progress
 and not-found callbacks authoritative. Native regex matching uses Rust's

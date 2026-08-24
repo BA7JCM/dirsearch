@@ -20,6 +20,25 @@ class NativeHTTPBackend:
             raise RequestException(get_native_backend_install_error()) from e
 
         self._native = dirsearch_native
+        self._engine = None
+        self._engine_config = None
+
+    def _get_engine(self):
+        config = {
+            "concurrency": options["thread_count"],
+            "timeout_secs": options["timeout"],
+            "headers": list(options["headers"].items()),
+            "proxies": self._proxy_urls(),
+            "follow_redirects": options["follow_redirects"],
+        }
+        if self._engine is None or config != self._engine_config:
+            self._engine = self._native.NativeHttpEngine(**config)
+            self._engine_config = config
+        return self._engine
+
+    def cancel(self) -> None:
+        if self._engine is not None:
+            self._engine.cancel()
 
     def scan(
         self,
@@ -30,15 +49,10 @@ class NativeHTTPBackend:
         raw_paths = list(paths)
         request_paths = [append_query_string(path, query) for path in raw_paths]
         quoted_paths = [safequote(path) for path in request_paths]
-        results = self._native.scan_http(
+        results = self._get_engine().scan(
             base_url,
             quoted_paths,
-            concurrency=options["thread_count"],
-            timeout_secs=options["timeout"],
-            headers=list(options["headers"].items()),
-            proxies=self._proxy_urls(),
             max_retries=options["max_retries"],
-            follow_redirects=options["follow_redirects"],
             max_body_size=MAX_RESPONSE_SIZE,
             **self._filter_options(),
         )

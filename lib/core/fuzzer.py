@@ -543,6 +543,11 @@ class NativeFuzzer(Fuzzer):
     def is_finished(self) -> bool:
         return self._finished
 
+    def quit(self) -> None:
+        super().quit()
+        if self._native_backend is not None:
+            self._native_backend.cancel()
+
 
 class AsyncFuzzer(BaseFuzzer):
     def __init__(

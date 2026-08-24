@@ -7,8 +7,12 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpStream;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
+use tokio::task::JoinSet;
+
+const SIGNAL_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 #[pyclass]
 struct NativeHttpResult {
@@ -32,10 +36,34 @@ struct NativeHttpResult {
     body: Vec<u8>,
 }
 
+#[pyclass]
+struct NativeHttpEngine {
+    runtime: tokio::runtime::Runtime,
+    clients: Vec<reqwest::Client>,
+    raw_headers: HeaderPairs,
+    concurrency: usize,
+    timeout_secs: f64,
+    follow_redirects: bool,
+    use_raw_http: bool,
+    cancelled: Arc<AtomicBool>,
+}
+
 type NumericRange = (usize, usize);
 type TimeFilter = (String, f64);
 type HeaderPairs = Vec<(String, String)>;
 type RawHttpResponse = (u16, HeaderPairs, Vec<u8>, usize);
+
+#[derive(Clone, Eq, PartialEq)]
+struct NativeHttpEngineConfig {
+    concurrency: usize,
+    timeout_bits: u64,
+    headers: HeaderPairs,
+    proxies: Vec<String>,
+    follow_redirects: bool,
+}
+
+type CachedNativeHttpEngine = Option<(NativeHttpEngineConfig, Arc<NativeHttpEngine>)>;
+static DEFAULT_HTTP_ENGINE: OnceLock<Mutex<CachedNativeHttpEngine>> = OnceLock::new();
 
 #[derive(Clone)]
 struct NativeFilterConfig {
@@ -455,6 +483,278 @@ fn build_http_client(
     builder.build()
 }
 
+#[pymethods]
+impl NativeHttpEngine {
+    #[new]
+    #[pyo3(signature = (
+        concurrency=25,
+        timeout_secs=7.5,
+        headers=Vec::new(),
+        proxies=Vec::new(),
+        follow_redirects=false,
+    ))]
+    fn new(
+        concurrency: usize,
+        timeout_secs: f64,
+        headers: HeaderPairs,
+        proxies: Vec<String>,
+        follow_redirects: bool,
+    ) -> PyResult<Self> {
+        let mut header_map = HeaderMap::new();
+        for (name, value) in &headers {
+            let name = HeaderName::from_bytes(name.as_bytes())
+                .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+            let value = HeaderValue::from_str(value)
+                .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+            header_map.insert(name, value);
+        }
+
+        let use_raw_http = proxies.is_empty();
+        let clients = if proxies.is_empty() {
+            vec![build_http_client(
+                &header_map,
+                concurrency,
+                timeout_secs,
+                follow_redirects,
+                None,
+            )
+            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?]
+        } else {
+            proxies
+                .iter()
+                .map(|proxy_url| {
+                    build_http_client(
+                        &header_map,
+                        concurrency,
+                        timeout_secs,
+                        follow_redirects,
+                        Some(proxy_url),
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| PyRuntimeError::new_err(error.to_string()))?
+        };
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .worker_threads(runtime_worker_count())
+            .build()
+            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+
+        Ok(Self {
+            runtime,
+            clients,
+            raw_headers: headers,
+            concurrency: concurrency.max(1),
+            timeout_secs,
+            follow_redirects,
+            use_raw_http,
+            cancelled: Arc::new(AtomicBool::new(false)),
+        })
+    }
+
+    fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Release);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (
+        base_url,
+        paths,
+        max_retries=0,
+        max_body_size=83886080,
+        include_status_codes=Vec::new(),
+        exclude_status_codes=Vec::new(),
+        minimum_response_size=0,
+        maximum_response_size=0,
+        matcher_mode="or".to_string(),
+        filter_mode="or".to_string(),
+        match_status_codes=Vec::new(),
+        filter_status_codes=Vec::new(),
+        match_sizes=Vec::new(),
+        filter_sizes=Vec::new(),
+        match_words=Vec::new(),
+        filter_words=Vec::new(),
+        match_lines=Vec::new(),
+        filter_lines=Vec::new(),
+        match_regex=None,
+        filter_regex=None,
+        match_headers=Vec::new(),
+        filter_headers=Vec::new(),
+        match_header_regex=None,
+        filter_header_regex=None,
+        match_time=Vec::new(),
+        filter_time=Vec::new(),
+    ))]
+    fn scan(
+        &self,
+        py: Python<'_>,
+        base_url: String,
+        paths: Vec<String>,
+        max_retries: usize,
+        max_body_size: usize,
+        include_status_codes: Vec<u16>,
+        exclude_status_codes: Vec<u16>,
+        minimum_response_size: usize,
+        maximum_response_size: usize,
+        matcher_mode: String,
+        filter_mode: String,
+        match_status_codes: Vec<u16>,
+        filter_status_codes: Vec<u16>,
+        match_sizes: Vec<NumericRange>,
+        filter_sizes: Vec<NumericRange>,
+        match_words: Vec<NumericRange>,
+        filter_words: Vec<NumericRange>,
+        match_lines: Vec<NumericRange>,
+        filter_lines: Vec<NumericRange>,
+        match_regex: Option<String>,
+        filter_regex: Option<String>,
+        match_headers: Vec<String>,
+        filter_headers: Vec<String>,
+        match_header_regex: Option<String>,
+        filter_header_regex: Option<String>,
+        match_time: Vec<TimeFilter>,
+        filter_time: Vec<TimeFilter>,
+    ) -> PyResult<Vec<NativeHttpResult>> {
+        let filter_config = Arc::new(
+            NativeFilterConfig::new(
+                include_status_codes,
+                exclude_status_codes,
+                minimum_response_size,
+                maximum_response_size,
+                matcher_mode,
+                filter_mode,
+                match_status_codes,
+                filter_status_codes,
+                match_sizes,
+                filter_sizes,
+                match_words,
+                filter_words,
+                match_lines,
+                filter_lines,
+                match_regex,
+                filter_regex,
+                match_headers,
+                filter_headers,
+                match_header_regex,
+                filter_header_regex,
+                match_time,
+                filter_time,
+            )
+            .map_err(PyRuntimeError::new_err)?,
+        );
+
+        self.cancelled.store(false, Ordering::Release);
+        let cancelled = self.cancelled.clone();
+        let clients = self.clients.clone();
+        let raw_headers = self.raw_headers.clone();
+        let concurrency = self.concurrency;
+        let timeout_secs = self.timeout_secs;
+        let follow_redirects = self.follow_redirects;
+        let use_raw_http = self.use_raw_http;
+        let runtime = &self.runtime;
+
+        py.allow_threads(move || {
+            runtime.block_on(async move {
+                let semaphore = Arc::new(tokio::sync::Semaphore::new(concurrency));
+                let result_count = paths.len();
+                let mut tasks = JoinSet::new();
+
+                for (request_index, path) in paths.into_iter().enumerate() {
+                    let client = clients[request_index % clients.len()].clone();
+                    let base_url = base_url.clone();
+                    let raw_headers = raw_headers.clone();
+                    let semaphore = semaphore.clone();
+                    let filter_config = filter_config.clone();
+                    tasks.spawn(async move {
+                        let _permit = match semaphore.acquire_owned().await {
+                            Ok(permit) => permit,
+                            Err(error) => {
+                                return (
+                                    request_index,
+                                    native_error_result(path, 0.0, error.to_string()),
+                                );
+                            }
+                        };
+                        let url = format!("{base_url}{path}");
+                        let start = Instant::now();
+
+                        let result = if use_raw_http
+                            && !follow_redirects
+                            && should_use_raw_http(&base_url, &path)
+                        {
+                            let raw_base_url = base_url.clone();
+                            let raw_path = path.clone();
+                            let raw_filter_config = filter_config.clone();
+                            let raw_result = tokio::task::spawn_blocking(move || {
+                                raw_http_get(
+                                    &raw_base_url,
+                                    raw_path,
+                                    &raw_headers,
+                                    timeout_secs,
+                                    max_body_size,
+                                    start,
+                                    raw_filter_config.as_ref(),
+                                )
+                            })
+                            .await;
+
+                            match raw_result {
+                                Ok(result) => result,
+                                Err(error) => native_error_result(
+                                    path,
+                                    start.elapsed().as_secs_f64() * 1000.0,
+                                    error.to_string(),
+                                ),
+                            }
+                        } else {
+                            request_with_client(
+                                &client,
+                                url,
+                                path,
+                                max_retries,
+                                max_body_size,
+                                start,
+                                filter_config.as_ref(),
+                            )
+                            .await
+                        };
+                        (request_index, result)
+                    });
+                }
+
+                let mut results = Vec::with_capacity(result_count);
+                while !tasks.is_empty() {
+                    tokio::select! {
+                        joined = tasks.join_next() => {
+                            match joined {
+                                Some(Ok(result)) => results.push(result),
+                                Some(Err(error)) => {
+                                    return Err(PyRuntimeError::new_err(error.to_string()));
+                                }
+                                None => break,
+                            }
+                        }
+                        _ = tokio::time::sleep(SIGNAL_POLL_INTERVAL) => {}
+                    }
+
+                    if cancelled.load(Ordering::Acquire) {
+                        tasks.abort_all();
+                        return Ok(Vec::new());
+                    }
+                    Python::with_gil(|py| py.check_signals())?;
+                    if cancelled.load(Ordering::Acquire) {
+                        tasks.abort_all();
+                        return Ok(Vec::new());
+                    }
+                }
+
+                results.sort_by_key(|(request_index, _)| *request_index);
+                Ok(results.into_iter().map(|(_, result)| result).collect())
+            })
+        })
+    }
+}
+
 #[pyfunction]
 #[allow(clippy::too_many_arguments)]
 #[pyo3(signature = (
@@ -496,7 +796,7 @@ fn scan_http(
     paths: Vec<String>,
     concurrency: usize,
     timeout_secs: f64,
-    headers: Vec<(String, String)>,
+    headers: HeaderPairs,
     proxies: Vec<String>,
     max_retries: usize,
     follow_redirects: bool,
@@ -524,190 +824,128 @@ fn scan_http(
     match_time: Vec<TimeFilter>,
     filter_time: Vec<TimeFilter>,
 ) -> PyResult<Vec<NativeHttpResult>> {
-    let filter_config = Arc::new(
-        NativeFilterConfig::new(
-            include_status_codes,
-            exclude_status_codes,
-            minimum_response_size,
-            maximum_response_size,
-            matcher_mode,
-            filter_mode,
-            match_status_codes,
-            filter_status_codes,
-            match_sizes,
-            filter_sizes,
-            match_words,
-            filter_words,
-            match_lines,
-            filter_lines,
-            match_regex,
-            filter_regex,
-            match_headers,
-            filter_headers,
-            match_header_regex,
-            filter_header_regex,
-            match_time,
-            filter_time,
-        )
-        .map_err(PyRuntimeError::new_err)?,
-    );
-
-    py.allow_threads(move || {
-        let runtime = tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .worker_threads(runtime_worker_count())
-            .build()
+    let config = NativeHttpEngineConfig {
+        concurrency,
+        timeout_bits: timeout_secs.to_bits(),
+        headers: headers.clone(),
+        proxies: proxies.clone(),
+        follow_redirects,
+    };
+    let engine = {
+        let cache = DEFAULT_HTTP_ENGINE.get_or_init(|| Mutex::new(None));
+        let mut cached = cache
+            .lock()
             .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
-
-        runtime.block_on(async move {
-            let raw_headers = headers.clone();
-            let mut header_map = HeaderMap::new();
-            for (name, value) in headers {
-                let name = HeaderName::from_bytes(name.as_bytes())
-                    .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
-                let value = HeaderValue::from_str(&value)
-                    .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
-                header_map.insert(name, value);
-            }
-
-            let use_raw_http = proxies.is_empty();
-            let clients = if proxies.is_empty() {
-                vec![build_http_client(
-                    &header_map,
+        if cached
+            .as_ref()
+            .is_none_or(|(cached_config, _)| *cached_config != config)
+        {
+            *cached = Some((
+                config,
+                Arc::new(NativeHttpEngine::new(
                     concurrency,
                     timeout_secs,
+                    headers,
+                    proxies,
                     follow_redirects,
-                    None,
-                )
-                .map_err(|error| PyRuntimeError::new_err(error.to_string()))?]
-            } else {
-                proxies
-                    .iter()
-                    .map(|proxy_url| {
-                        build_http_client(
-                            &header_map,
-                            concurrency,
-                            timeout_secs,
-                            follow_redirects,
-                            Some(proxy_url),
-                        )
-                    })
-                    .collect::<Result<Vec<_>, _>>()
-                    .map_err(|error| PyRuntimeError::new_err(error.to_string()))?
-            };
+                )?),
+            ));
+        }
+        cached.as_ref().unwrap().1.clone()
+    };
 
-            let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(concurrency.max(1)));
-            let mut tasks = Vec::with_capacity(paths.len());
+    engine.scan(
+        py,
+        base_url,
+        paths,
+        max_retries,
+        max_body_size,
+        include_status_codes,
+        exclude_status_codes,
+        minimum_response_size,
+        maximum_response_size,
+        matcher_mode,
+        filter_mode,
+        match_status_codes,
+        filter_status_codes,
+        match_sizes,
+        filter_sizes,
+        match_words,
+        filter_words,
+        match_lines,
+        filter_lines,
+        match_regex,
+        filter_regex,
+        match_headers,
+        filter_headers,
+        match_header_regex,
+        filter_header_regex,
+        match_time,
+        filter_time,
+    )
+}
 
-            for (request_index, path) in paths.into_iter().enumerate() {
-                let client = clients[request_index % clients.len()].clone();
-                let base_url = base_url.clone();
-                let raw_headers = raw_headers.clone();
-                let semaphore = semaphore.clone();
-                let filter_config = filter_config.clone();
-                tasks.push(tokio::spawn(async move {
-                    let _permit = match semaphore.acquire_owned().await {
-                        Ok(permit) => permit,
-                        Err(error) => {
-                            return native_error_result(path, 0.0, error.to_string());
-                        }
-                    };
-                    let url = format!("{base_url}{path}");
-                    let start = Instant::now();
-
-                    if use_raw_http && !follow_redirects && should_use_raw_http(&base_url, &path) {
-                        let raw_base_url = base_url.clone();
-                        let raw_path = path.clone();
-                        let raw_filter_config = filter_config.clone();
-                        let raw_result = tokio::task::spawn_blocking(move || {
-                            raw_http_get(
-                                &raw_base_url,
-                                raw_path,
-                                &raw_headers,
-                                timeout_secs,
-                                max_body_size,
-                                start,
-                                raw_filter_config.as_ref(),
-                            )
-                        })
-                        .await;
-
-                        return match raw_result {
-                            Ok(result) => result,
-                            Err(error) => native_error_result(
-                                path,
-                                start.elapsed().as_secs_f64() * 1000.0,
-                                error.to_string(),
-                            ),
-                        };
-                    }
-
-                    let mut response = None;
-                    let mut last_error = None;
-                    for _ in 0..=max_retries {
-                        match client.get(&url).send().await {
-                            Ok(value) => {
-                                response = Some(value);
-                                last_error = None;
-                                break;
-                            }
-                            Err(error) => last_error = Some(error.to_string()),
-                        }
-                    }
-                    let response = match response {
-                        Some(response) => response,
-                        None => {
-                            return native_error_result(
-                                path,
-                                start.elapsed().as_secs_f64() * 1000.0,
-                                last_error.unwrap_or_else(|| "request failed".to_string()),
-                            );
-                        }
-                    };
-                    let status = response.status().as_u16();
-                    let headers = response
-                        .headers()
-                        .iter()
-                        .map(|(name, value)| {
-                            (
-                                name.as_str().to_string(),
-                                value.to_str().unwrap_or_default().to_string(),
-                            )
-                        })
-                        .collect::<Vec<_>>();
-                    let (body, body_length) =
-                        match read_response_body(response, max_body_size).await {
-                            Ok(result) => result,
-                            Err(error) => {
-                                return native_error_result(
-                                    path,
-                                    start.elapsed().as_secs_f64() * 1000.0,
-                                    error.to_string(),
-                                );
-                            }
-                        };
-                    native_http_result_with_length(
-                        path,
-                        status,
-                        headers,
-                        body,
-                        body_length,
-                        start.elapsed().as_secs_f64() * 1000.0,
-                        filter_config.as_ref(),
-                    )
-                }));
+async fn request_with_client(
+    client: &reqwest::Client,
+    url: String,
+    path: String,
+    max_retries: usize,
+    max_body_size: usize,
+    start: Instant,
+    filter_config: &NativeFilterConfig,
+) -> NativeHttpResult {
+    let mut response = None;
+    let mut last_error = None;
+    for _ in 0..=max_retries {
+        match client.get(&url).send().await {
+            Ok(value) => {
+                response = Some(value);
+                last_error = None;
+                break;
             }
-
-            let mut results = Vec::with_capacity(tasks.len());
-            for task in tasks {
-                let result = task
-                    .await
-                    .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
-                results.push(result);
-            }
-            Ok(results)
+            Err(error) => last_error = Some(error.to_string()),
+        }
+    }
+    let response = match response {
+        Some(response) => response,
+        None => {
+            return native_error_result(
+                path,
+                start.elapsed().as_secs_f64() * 1000.0,
+                last_error.unwrap_or_else(|| "request failed".to_string()),
+            );
+        }
+    };
+    let status = response.status().as_u16();
+    let headers = response
+        .headers()
+        .iter()
+        .map(|(name, value)| {
+            (
+                name.as_str().to_string(),
+                value.to_str().unwrap_or_default().to_string(),
+            )
         })
-    })
+        .collect::<Vec<_>>();
+    let (body, body_length) = match read_response_body(response, max_body_size).await {
+        Ok(result) => result,
+        Err(error) => {
+            return native_error_result(
+                path,
+                start.elapsed().as_secs_f64() * 1000.0,
+                error.to_string(),
+            );
+        }
+    };
+    native_http_result_with_length(
+        path,
+        status,
+        headers,
+        body,
+        body_length,
+        start.elapsed().as_secs_f64() * 1000.0,
+        filter_config,
+    )
 }
 
 #[cfg(test)]
@@ -1389,6 +1627,7 @@ mod tests {
 fn dirsearch_native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(generate_wordlist, module)?)?;
     module.add_function(wrap_pyfunction!(scan_http, module)?)?;
+    module.add_class::<NativeHttpEngine>()?;
     module.add_class::<NativeHttpResult>()?;
     Ok(())
 }
