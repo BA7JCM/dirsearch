@@ -409,6 +409,9 @@ class Requester(BaseRequester):
             else:
                 self.session.auth = HttpNtlmAuth(user, password)
 
+    def close(self) -> None:
+        self.session.close()
+
     # :path: is expected not to start with "/"
     def request(self, path: str, proxy: str | None = None) -> Response:
         self.wait_for_rate_limit()
@@ -461,13 +464,16 @@ class Requester(BaseRequester):
                     proxies=proxies,
                     stream=True,
                 )
-                if (
-                    proxies
-                    and origin_response.status_code == PROXY_AUTHENTICATION_REQUIRED
-                ):
+                try:
+                    if (
+                        proxies
+                        and origin_response.status_code
+                        == PROXY_AUTHENTICATION_REQUIRED
+                    ):
+                        raise RequestException("Proxy authentication required")
+                    response = Response(url, origin_response)
+                finally:
                     origin_response.close()
-                    raise RequestException("Proxy authentication required")
-                response = Response(url, origin_response)
                 response.elapsed = time.perf_counter() - start_time
 
                 log_msg = f'"{options["http_method"]} {response.url}" {response.status} - {response.length}B'
@@ -598,6 +604,13 @@ class AsyncRequester(BaseRequester):
             else:
                 self.session.auth = HttpxNtlmAuth(user, password)
 
+    async def close(self) -> None:
+        try:
+            if self.replay_session is not None:
+                await self.replay_session.aclose()
+        finally:
+            await self.session.aclose()
+
     async def replay_request(self, path: str, proxy: str) -> AsyncResponse:
         if self.replay_session is None:
             transport = httpx.AsyncHTTPTransport(
@@ -652,14 +665,16 @@ class AsyncRequester(BaseRequester):
                     stream=True,
                     follow_redirects=options["follow_redirects"],
                 )
-                if (
-                    using_proxy
-                    and xresponse.status_code == PROXY_AUTHENTICATION_REQUIRED
-                ):
+                try:
+                    if (
+                        using_proxy
+                        and xresponse.status_code
+                        == PROXY_AUTHENTICATION_REQUIRED
+                    ):
+                        raise RequestException("Proxy authentication required")
+                    response = await AsyncResponse.create(url, xresponse)
+                finally:
                     await xresponse.aclose()
-                    raise RequestException("Proxy authentication required")
-                response = await AsyncResponse.create(url, xresponse)
-                await xresponse.aclose()
                 # Measure the whole streamed request lifecycle so sync and async
                 # modes report the same thing.
                 response.elapsed = time.perf_counter() - start_time

@@ -29,6 +29,7 @@ import httpx
 import requests
 
 from lib.connection import requester as requester_module
+from lib.connection import response as response_module
 from lib.connection.native import NativeHTTPBackend
 from lib.connection.rate_limiter import RequestRateLimiter
 from lib.connection.requester import (
@@ -143,10 +144,30 @@ class DummySyncResponse:
     history = []
     encoding = "utf-8"
 
-    @staticmethod
-    def iter_content(chunk_size):
+    def __init__(self, error=None):
+        self.closed = False
+        self.error = error
+
+    def iter_content(self, chunk_size):
         del chunk_size
         yield b"body"
+        if self.error:
+            raise self.error
+
+    def close(self):
+        self.closed = True
+
+
+class MultiChunkSyncResponse(DummySyncResponse):
+    def __init__(self):
+        super().__init__()
+        self.read_second_chunk = False
+
+    def iter_content(self, chunk_size):
+        del chunk_size
+        yield b"body"
+        self.read_second_chunk = True
+        yield b"should-not-be-read"
 
 
 class DummySyncSession:
@@ -168,16 +189,30 @@ class DummyAsyncResponse:
     history = []
     encoding = "utf-8"
 
-    def __init__(self):
+    def __init__(self, error=None):
         self.closed = False
+        self.error = error
 
-    @staticmethod
-    async def aiter_bytes(chunk_size):
+    async def aiter_bytes(self, chunk_size):
         del chunk_size
         yield b"body"
+        if self.error:
+            raise self.error
 
     async def aclose(self):
         self.closed = True
+
+
+class MultiChunkAsyncResponse(DummyAsyncResponse):
+    def __init__(self):
+        super().__init__()
+        self.read_second_chunk = False
+
+    async def aiter_bytes(self, chunk_size):
+        del chunk_size
+        yield b"body"
+        self.read_second_chunk = True
+        yield b"should-not-be-read"
 
 
 class DummyAsyncSession:
@@ -188,10 +223,14 @@ class DummyAsyncSession:
 
     def __init__(self, response):
         self.response = response
+        self.closed = False
 
     async def send(self, request, **kwargs):
         del request, kwargs
         return self.response
+
+    async def aclose(self):
+        self.closed = True
 
 
 class BaseRequesterTestCase(TestCase):
@@ -379,6 +418,48 @@ class TestRequesterRateLimiting(BaseRequesterTestCase):
         timer.assert_not_called()
 
 
+class TestRequesterResponseCleanup(BaseRequesterTestCase):
+    def test_sync_response_closes_after_early_bounded_parse(self):
+        requester = Requester()
+        requester.set_url("http://example.com/")
+        origin_response = MultiChunkSyncResponse()
+
+        try:
+            with (
+                patch.object(
+                    requester.session, "send", return_value=origin_response
+                ),
+                patch.object(response_module, "MAX_RESPONSE_SIZE", 4),
+            ):
+                response = requester.request("admin")
+        finally:
+            requester.session.close()
+
+        self.assertEqual(response.body, b"body")
+        self.assertFalse(origin_response.read_second_chunk)
+        self.assertTrue(origin_response.closed)
+
+    def test_sync_response_closes_when_body_parse_fails(self):
+        requester = Requester()
+        requester.set_url("http://example.com/")
+        origin_response = DummySyncResponse(
+            requests.exceptions.ChunkedEncodingError("incomplete body")
+        )
+
+        try:
+            with patch.object(
+                requester.session, "send", return_value=origin_response
+            ):
+                with self.assertRaisesRegex(
+                    RequestException, "Failed to read response body"
+                ):
+                    requester.request("admin")
+        finally:
+            requester.session.close()
+
+        self.assertTrue(origin_response.closed)
+
+
 class TestRequesterPathPreservation(BaseRequesterTestCase):
     def test_sync_requester_preserves_encoded_edge_case_targets(self):
         with RequestTargetServer() as server:
@@ -529,6 +610,54 @@ class TestAsyncRequesterElapsed(IsolatedAsyncioTestCase):
 
         self.assertEqual(response.elapsed, 0.5, "Async elapsed should measure the full streamed request lifecycle")
         self.assertTrue(requester.session.response.closed, "Streamed async responses should be closed before elapsed is used")
+
+
+class TestAsyncRequesterResponseCleanup(
+    BaseRequesterTestCase, IsolatedAsyncioTestCase
+):
+    async def test_async_response_closes_when_body_parse_fails(self):
+        requester = AsyncRequester()
+        requester.set_url("http://example.com/")
+        origin_response = DummyAsyncResponse(
+            httpx.RemoteProtocolError("incomplete body")
+        )
+        requester.session.send = AsyncMock(return_value=origin_response)
+
+        try:
+            with self.assertRaisesRegex(
+                RequestException, "Failed to read response body"
+            ):
+                await requester.request("admin")
+        finally:
+            await requester.session.aclose()
+
+        self.assertTrue(origin_response.closed)
+
+    async def test_async_response_closes_after_early_bounded_parse(self):
+        requester = AsyncRequester()
+        requester.set_url("http://example.com/")
+        origin_response = MultiChunkAsyncResponse()
+        requester.session.send = AsyncMock(return_value=origin_response)
+
+        try:
+            with patch.object(response_module, "MAX_RESPONSE_SIZE", 4):
+                response = await requester.request("admin")
+        finally:
+            await requester.session.aclose()
+
+        self.assertEqual(response.body, b"body")
+        self.assertFalse(origin_response.read_second_chunk)
+        self.assertTrue(origin_response.closed)
+
+    async def test_close_closes_primary_and_replay_sessions(self):
+        requester = object.__new__(AsyncRequester)
+        requester.session = DummyAsyncSession(DummyAsyncResponse())
+        requester.replay_session = DummyAsyncSession(DummyAsyncResponse())
+
+        await requester.close()
+
+        self.assertTrue(requester.session.closed)
+        self.assertTrue(requester.replay_session.closed)
 
 
 class TestAsyncRequesterPathPreservation(BaseRequesterTestCase, IsolatedAsyncioTestCase):

@@ -1,7 +1,7 @@
 import asyncio
 import time
-from unittest import IsolatedAsyncioTestCase
-from unittest.mock import patch
+from unittest import IsolatedAsyncioTestCase, TestCase
+from unittest.mock import Mock, patch
 
 from lib.controller.controller import Controller
 from lib.core.data import options
@@ -33,6 +33,64 @@ def create_controller(fuzzer):
     controller.pause_future = controller.loop.create_future()
     controller.fuzzer = fuzzer
     return controller
+
+
+class RecordingLoop:
+    def __init__(self):
+        self.closed = False
+
+    def run_until_complete(self, awaitable):
+        return asyncio.run(awaitable)
+
+    def close(self):
+        self.closed = True
+
+
+class RecordingAsyncRequester:
+    def __init__(self):
+        self.closed = False
+
+    async def close(self):
+        self.closed = True
+
+
+class TestControllerCleanup(TestCase):
+    def test_sync_requester_closes_after_run_failure(self):
+        requester = Mock()
+
+        def fail_run(controller):
+            controller.requester = requester
+            raise RuntimeError("scan failed")
+
+        with (
+            patch.dict(options, {"session_file": None}),
+            patch.object(Controller, "setup"),
+            patch.object(Controller, "run", new=fail_run),
+            self.assertRaisesRegex(RuntimeError, "scan failed"),
+        ):
+            Controller()
+
+        requester.close.assert_called_once_with()
+
+    def test_async_requester_and_event_loop_close_after_run_failure(self):
+        requester = RecordingAsyncRequester()
+        loop = RecordingLoop()
+
+        def fail_run(controller):
+            controller.requester = requester
+            controller.loop = loop
+            raise RuntimeError("scan failed")
+
+        with (
+            patch.dict(options, {"session_file": None}),
+            patch.object(Controller, "setup"),
+            patch.object(Controller, "run", new=fail_run),
+            self.assertRaisesRegex(RuntimeError, "scan failed"),
+        ):
+            Controller()
+
+        self.assertTrue(requester.closed)
+        self.assertTrue(loop.closed)
 
 
 class TestAsyncController(IsolatedAsyncioTestCase):
