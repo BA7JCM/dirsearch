@@ -5,7 +5,7 @@
 
 ## Build, Test, and Development Commands
 - `python3 dirsearch.py -u https://example.com -w tests/static/wordlist.txt -q`: quick local CLI smoke test.
-- `python3 testing.py`: legacy unit/integration test runner used by CI.
+- `python -m unittest discover -s tests -t .`: canonical unit/integration test runner used by CI.
 - `python3 -m unittest tests.connection.test_requester tests.connection.test_dns tests.core.test_scanner`: focused regression pass.
 - `python3 -m pip install .`: validate packaged install and console entrypoints.
 - `docker compose -f - build dirsearch` with `build.network: host`: verify Docker release images, matching the GitHub workflow.
