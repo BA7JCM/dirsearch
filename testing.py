@@ -32,6 +32,7 @@ from tests.connection.test_rate_limiter import (  # noqa: F401
 )
 from tests.connection.test_requester import (  # noqa: F401
     TestAsyncRequesterElapsed,
+    TestAsyncRequesterResponseCleanup,
     TestAsyncRequesterSSLHandling,
     TestAsyncRequesterPathPreservation,
     TestNativeRequesterPathPreservation,
@@ -40,12 +41,16 @@ from tests.connection.test_requester import (  # noqa: F401
     TestRequesterPathPreservation,
     TestRequesterProxyRouting,
     TestRequesterRateLimiting,
+    TestRequesterResponseCleanup,
     TestRequesterSSLHandling,
     TestSSLHelpers,
 )
 from tests.connection.test_response import TestResponse  # noqa: F401
 from tests.connection.test_response import TestAsyncResponse  # noqa: F401
-from tests.controller.test_async_controller import TestAsyncController  # noqa: F401
+from tests.controller.test_async_controller import (  # noqa: F401
+    TestAsyncController,
+    TestControllerCleanup,
+)
 from tests.controller.test_session_store import TestSessionStore  # noqa: F401
 from tests.core.test_advanced_filters import TestAdvancedFilters  # noqa: F401
 from tests.core.test_async_fuzzer import TestAsyncFuzzer  # noqa: F401

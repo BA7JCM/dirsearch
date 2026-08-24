@@ -177,7 +177,28 @@ class Controller:
             self.setup()
             self.old_session = False
 
-        self.run()
+        try:
+            self.run()
+        finally:
+            self._close_requester()
+
+    def _close_requester(self) -> None:
+        requester = getattr(self, "requester", None)
+        loop = getattr(self, "loop", None)
+
+        if requester is None:
+            if loop is not None:
+                loop.close()
+            return
+
+        if loop is None:
+            requester.close()
+            return
+
+        try:
+            loop.run_until_complete(requester.close())
+        finally:
+            loop.close()
 
     def _import(self, session_file: str) -> None:
         try:
