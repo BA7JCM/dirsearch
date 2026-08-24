@@ -903,7 +903,14 @@ async fn request_with_client(
                 last_error = None;
                 break;
             }
-            Err(error) => last_error = Some(error.to_string()),
+            Err(error) => {
+                let error = format_error_chain(&error);
+                let retryable = !error.contains("tunnel error: unsuccessful");
+                last_error = Some(error);
+                if !retryable {
+                    break;
+                }
+            }
         }
     }
     let response = match response {
@@ -946,6 +953,17 @@ async fn request_with_client(
         start.elapsed().as_secs_f64() * 1000.0,
         filter_config,
     )
+}
+
+fn format_error_chain(error: &dyn std::error::Error) -> String {
+    let mut message = error.to_string();
+    let mut source = error.source();
+    while let Some(error) = source {
+        message.push_str(": ");
+        message.push_str(&error.to_string());
+        source = error.source();
+    }
+    message
 }
 
 #[cfg(test)]

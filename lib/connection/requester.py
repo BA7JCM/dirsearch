@@ -46,6 +46,11 @@ except ImportError:
     SSLCertVerificationError = None
 
 from lib.connection.dns import cached_getaddrinfo
+from lib.connection.proxy import (
+    PROXY_AUTHENTICATION_REQUIRED,
+    format_proxy_error,
+    proxy_error_status,
+)
 from lib.connection.response import AsyncResponse, Response
 from lib.core.data import options
 from lib.core.decorators import cached
@@ -199,6 +204,7 @@ def _is_timeout_error(exc: Exception) -> bool:
             (
                 requests.exceptions.Timeout,
                 urllib3.exceptions.TimeoutError,
+                httpx.TimeoutException,
                 socket.timeout,
             ),
         ):
@@ -436,9 +442,8 @@ class Requester(BaseRequester):
                         # socks5://localhost:9050 => socks5://[credential]@localhost:9050
                         proxy_url = proxy_url.replace("://", f"://{self.proxy_cred}@", 1)
 
+                    proxies["http"] = proxy_url
                     proxies["https"] = proxy_url
-                    if not proxy_url.startswith("https://"):
-                        proxies["http"] = proxy_url
                 except IndexError:
                     pass
 
@@ -467,6 +472,12 @@ class Requester(BaseRequester):
                     proxies=proxies,
                     stream=True,
                 )
+                if (
+                    proxies
+                    and origin_response.status_code == PROXY_AUTHENTICATION_REQUIRED
+                ):
+                    origin_response.close()
+                    raise RequestException("Proxy authentication required")
                 response = Response(url, origin_response)
                 response.elapsed = time.perf_counter() - start_time
 
@@ -479,29 +490,27 @@ class Requester(BaseRequester):
 
                 return response
 
+            except RequestException:
+                raise
             except Exception as e:
                 logger.exception(e)
 
                 if e == socket.gaierror:
                     err_msg = "Couldn't resolve DNS"
+                elif _is_timeout_error(e):
+                    err_msg = f"Request timeout: {url}"
                 elif _is_ssl_error(e):
                     err_msg = _format_ssl_error(e, url)
                 elif isinstance(e, requests.exceptions.TooManyRedirects):
                     err_msg = f"Too many redirects: {url}"
-                elif "ProxyError" in str(e):
-                    if proxy:
-                        err_msg = f"Error with the proxy: {proxy}"
-                    else:
-                        err_msg = "Error with the system proxy"
-                    # Prevent from reusing it in the future
-                    if proxy in options["proxies"] and len(options["proxies"]) > 1:
-                        options["proxies"].remove(proxy)
+                elif isinstance(e, requests.exceptions.ProxyError):
+                    err_msg = format_proxy_error(e)
+                    if proxy_error_status(e) in (407, 429):
+                        raise RequestException(err_msg) from e
                 elif "InvalidURL" in str(e):
                     err_msg = f"Invalid URL: {url}"
                 elif "InvalidProxyURL" in str(e):
                     err_msg = f"Invalid proxy URL: {proxy}"
-                elif _is_timeout_error(e):
-                    err_msg = f"Request timeout: {url}"
                 elif _is_response_read_error(e):
                     err_msg = f"Failed to read response body: {url}"
                 elif "ConnectionError" in str(e):
@@ -530,7 +539,9 @@ class ProxyRoatingTransport(httpx.AsyncBaseTransport):
         ]
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
-        request.extensions["target"] = str(request.url).encode()
+        # Let httpcore choose absolute-form for forwarding and authority/origin-form
+        # for CONNECT tunnels. A custom target overrides all three request forms.
+        request.extensions.pop("target", None)
         transport = random.choice(self._transports)
         return await transport.handle_async_request(request)
 
@@ -562,7 +573,7 @@ class AsyncRequester(BaseRequester):
         if options["auth"]:
             self.set_auth(options["auth_type"], options["auth"])
 
-    def parse_proxy(self, proxy: str) -> str:
+    def parse_proxy(self, proxy: str) -> str | httpx.Proxy | None:
         if not proxy:
             return None
 
@@ -572,6 +583,12 @@ class AsyncRequester(BaseRequester):
         if self.proxy_cred and "@" not in proxy:
             # socks5://localhost:9050 => socks5://[credential]@localhost:9050
             proxy = proxy.replace("://", f"://{self.proxy_cred}@", 1)
+
+        if proxy.startswith("https://"):
+            proxy_ssl_context = ssl.create_default_context()
+            proxy_ssl_context.check_hostname = False
+            proxy_ssl_context.verify_mode = ssl.CERT_NONE
+            return httpx.Proxy(proxy, ssl_context=proxy_ssl_context)
 
         return proxy
 
@@ -621,6 +638,7 @@ class AsyncRequester(BaseRequester):
         quoted_request_path = safequote(request_path)
         url = self._url + quoted_request_path
         session = session or self.session
+        using_proxy = replay or bool(options["proxies"])
 
         for _ in range(options["max_retries"] + 1):
             try:
@@ -648,6 +666,12 @@ class AsyncRequester(BaseRequester):
                     stream=True,
                     follow_redirects=options["follow_redirects"],
                 )
+                if (
+                    using_proxy
+                    and xresponse.status_code == PROXY_AUTHENTICATION_REQUIRED
+                ):
+                    await xresponse.aclose()
+                    raise RequestException("Proxy authentication required")
                 response = await AsyncResponse.create(url, xresponse)
                 await xresponse.aclose()
                 # Measure the whole streamed request lifecycle so sync and async
@@ -663,10 +687,14 @@ class AsyncRequester(BaseRequester):
 
                 return response
 
+            except RequestException:
+                raise
             except Exception as e:
                 logger.exception(e)
 
-                if isinstance(e, httpx.ConnectError) and not _is_ssl_error(e):
+                if _is_timeout_error(e):
+                    err_msg = f"Request timeout: {url}"
+                elif isinstance(e, httpx.ConnectError) and not _is_ssl_error(e):
                     if str(e).startswith("[Errno -2]"):
                         err_msg = "Couldn't resolve DNS"
                     else:
@@ -676,11 +704,11 @@ class AsyncRequester(BaseRequester):
                 elif isinstance(e, httpx.TooManyRedirects):
                     err_msg = f"Too many redirects: {url}"
                 elif isinstance(e, httpx.ProxyError):
-                    err_msg = "Cannot establish the proxy connection"
+                    err_msg = format_proxy_error(e)
+                    if proxy_error_status(e) in (407, 429):
+                        raise RequestException(err_msg) from e
                 elif isinstance(e, httpx.InvalidURL):
                     err_msg = f"Invalid URL: {url}"
-                elif isinstance(e, httpx.TimeoutException):
-                    err_msg = f"Request timeout: {url}"
                 elif _is_response_read_error(e):
                     err_msg = f"Failed to read response body: {url}"
                 else:
