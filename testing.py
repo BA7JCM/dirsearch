@@ -24,6 +24,7 @@ from tests.connection.test_dns import TestDNS  # noqa: F401
 from tests.connection.test_native_backend import TestNativeHTTPBackend  # noqa: F401
 from tests.connection.test_native_engine import TestNativeHttpEngine  # noqa: F401
 from tests.connection.test_native_response import TestNativeResponse  # noqa: F401
+from tests.connection.test_proxy_integration import TestProxyIntegration  # noqa: F401
 from tests.connection.test_requester import (  # noqa: F401
     TestAsyncRequesterElapsed,
     TestAsyncRequesterSSLHandling,

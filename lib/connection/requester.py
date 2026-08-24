@@ -529,7 +529,9 @@ class ProxyRoatingTransport(httpx.AsyncBaseTransport):
         ]
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
-        request.extensions["target"] = str(request.url).encode()
+        # Let httpcore choose absolute-form for forwarding and authority/origin-form
+        # for CONNECT tunnels. A custom target overrides all three request forms.
+        request.extensions.pop("target", None)
         transport = random.choice(self._transports)
         return await transport.handle_async_request(request)
 
@@ -561,7 +563,7 @@ class AsyncRequester(BaseRequester):
         if options["auth"]:
             self.set_auth(options["auth_type"], options["auth"])
 
-    def parse_proxy(self, proxy: str) -> str:
+    def parse_proxy(self, proxy: str) -> str | httpx.Proxy | None:
         if not proxy:
             return None
 
@@ -571,6 +573,12 @@ class AsyncRequester(BaseRequester):
         if self.proxy_cred and "@" not in proxy:
             # socks5://localhost:9050 => socks5://[credential]@localhost:9050
             proxy = proxy.replace("://", f"://{self.proxy_cred}@", 1)
+
+        if proxy.startswith("https://"):
+            proxy_ssl_context = ssl.create_default_context()
+            proxy_ssl_context.check_hostname = False
+            proxy_ssl_context.verify_mode = ssl.CERT_NONE
+            return httpx.Proxy(proxy, ssl_context=proxy_ssl_context)
 
         return proxy
 
