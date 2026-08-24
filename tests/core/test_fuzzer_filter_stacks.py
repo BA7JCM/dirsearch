@@ -20,6 +20,12 @@ class DummyDictionary:
     def __len__(self):
         return len(self.paths)
 
+    def claim_next(self):
+        return next(self)
+
+    def release_claim(self, path):
+        return None
+
 
 def stack_response(path, body, *, filtered=False, filter_reason=None):
     return NativeResponse(
