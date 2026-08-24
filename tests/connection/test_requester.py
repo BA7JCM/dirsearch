@@ -366,6 +366,38 @@ class TestRequesterPathPreservation(BaseRequesterTestCase):
             self.assertEqual(server.targets, [b"/admin?debug=true"])
 
 
+class TestRequesterProxyRouting(BaseRequesterTestCase):
+    def test_proxy_scheme_never_bypasses_target_scheme(self):
+        for proxy_scheme in ("http", "https"):
+            proxy_url = f"{proxy_scheme}://proxy.invalid:8080"
+            options["proxies"] = [proxy_url]
+
+            for target_scheme in ("http", "https"):
+                with self.subTest(
+                    proxy_scheme=proxy_scheme,
+                    target_scheme=target_scheme,
+                ):
+                    requester = Requester()
+                    requester.set_url(f"{target_scheme}://origin.invalid/")
+
+                    with (
+                        patch.object(requester, "increase_rate"),
+                        patch.object(
+                            requester.session,
+                            "send",
+                            return_value=DummySyncResponse(),
+                        ) as send,
+                    ):
+                        requester.request("admin")
+
+                    prepared_request = send.call_args.args[0]
+                    proxies = send.call_args.kwargs["proxies"]
+                    self.assertEqual(
+                        requests.utils.select_proxy(prepared_request.url, proxies),
+                        proxy_url,
+                    )
+
+
 class TestAsyncRequesterSSLHandling(BaseRequesterTestCase, IsolatedAsyncioTestCase):
     async def test_async_connect_error_with_ssl_cause_uses_ssl_message(self):
         requester = AsyncRequester()

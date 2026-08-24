@@ -32,6 +32,7 @@ from tests.connection.test_requester import (  # noqa: F401
     TestRequesterElapsed,
     TestRequesterErrorClassification,
     TestRequesterPathPreservation,
+    TestRequesterProxyRouting,
     TestRequesterSSLHandling,
     TestSSLHelpers,
 )

@@ -436,9 +436,8 @@ class Requester(BaseRequester):
                         # socks5://localhost:9050 => socks5://[credential]@localhost:9050
                         proxy_url = proxy_url.replace("://", f"://{self.proxy_cred}@", 1)
 
+                    proxies["http"] = proxy_url
                     proxies["https"] = proxy_url
-                    if not proxy_url.startswith("https://"):
-                        proxies["http"] = proxy_url
                 except IndexError:
                     pass
 
