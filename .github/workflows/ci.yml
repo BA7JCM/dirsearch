@@ -36,7 +36,7 @@ jobs:
         echo https://self-signed.badssl.com | python3 dirsearch.py -w ./tests/static/wordlist.txt --stdin --max-time 8 --auth u:p --auth-type basic --scheme http --target-max-time 9
 
     - name: Unit Test
-      run: python3 testing.py
+      run: python -m unittest discover -s tests -t .
 
     - name: Lint
       run: |
@@ -68,4 +68,4 @@ jobs:
       run: |
         python -c "import dirsearch_native"
         python -m unittest tests.connection.test_requester.TestNativeRequesterPathPreservation
-        python testing.py
+        python -m unittest discover -s tests -t .
