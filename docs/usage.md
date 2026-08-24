@@ -2,7 +2,8 @@
 
 [![Dirsearch demo](https://asciinema.org/a/380112.svg)](https://asciinema.org/a/380112)
 
-These examples cover the most common arguments. Use `python3 dirsearch.py -h` for the complete option list.
+These examples cover the most common arguments. Use `python3 dirsearch.py -h`
+for common options or `python3 dirsearch.py -hh` for the complete option list.
 
 ## Simple Usage
 

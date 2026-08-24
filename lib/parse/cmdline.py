@@ -16,6 +16,7 @@
 #
 #  Author: Mauro Soria
 
+from copy import copy
 from optparse import OptionParser, OptionGroup, Values
 
 
@@ -27,10 +28,159 @@ from lib.core.settings import (
 from lib.utils.common import get_config_file
 
 
-def parse_arguments() -> Values:
+COMMON_HELP_OPTIONS = frozenset(
+    {
+        "--version",
+        "--help",
+        "--help-all",
+        "--url",
+        "--urls-file",
+        "--stdin",
+        "--cidr",
+        "--raw",
+        "--session",
+        "--config",
+        "--wordlists",
+        "--wordlist-categories",
+        "--extensions",
+        "--force-extensions",
+        "--exclude-extensions",
+        "--prefixes",
+        "--suffixes",
+        "--threads",
+        "--async",
+        "--no-async",
+        "--recursive",
+        "--max-recursion-depth",
+        "--recursion-status",
+        "--include-status",
+        "--exclude-status",
+        "--exclude-sizes",
+        "--exclude-text",
+        "--exclude-regex",
+        "--exclude-redirect",
+        "--max-time",
+        "--target-max-time",
+        "--http-method",
+        "--data",
+        "--header",
+        "--follow-redirects",
+        "--random-agent",
+        "--user-agent",
+        "--cookie",
+        "--auth",
+        "--auth-type",
+        "--timeout",
+        "--delay",
+        "--proxy",
+        "--tor",
+        "--scheme",
+        "--max-rate",
+        "--retries",
+        "--crawl",
+        "--full-url",
+        "--no-color",
+        "--quiet-mode",
+        "--verbose",
+        "--output-formats",
+        "--output-file",
+        "--log",
+    }
+)
+
+
+class DirsearchOptionParser(OptionParser):
+    def _process_short_opts(self, rargs, values) -> None:
+        # optparse treats -hh as two -h flags unless it is handled explicitly.
+        if rargs[0] == "-hh":
+            rargs[0] = "--help-all"
+            self._process_long_opt(rargs, values)
+            return
+
+        super()._process_short_opts(rargs, values)
+
+
+def _iter_options(parser: OptionParser):
+    yield from parser.option_list
+    for group in parser.option_groups:
+        yield from group.option_list
+
+
+def _is_common_help_option(option) -> bool:
+    return bool(
+        COMMON_HELP_OPTIONS.intersection(option._short_opts + option._long_opts)
+    )
+
+
+def _build_common_help_parser(parser: OptionParser) -> OptionParser:
+    available_options = {
+        option_string
+        for option in _iter_options(parser)
+        for option_string in option._short_opts + option._long_opts
+    }
+    missing_options = COMMON_HELP_OPTIONS - available_options
+    if missing_options:
+        raise RuntimeError(
+            f"Unknown common help options: {', '.join(sorted(missing_options))}"
+        )
+
+    common_parser = OptionParser(
+        usage=parser.usage,
+        description=parser.description,
+        epilog=(
+            "Use '-hh' or '--help-all' to show every option. "
+            f"{parser.epilog}"
+        ),
+        add_help_option=False,
+    )
+
+    for option in parser.option_list:
+        if _is_common_help_option(option):
+            common_parser.add_option(copy(option))
+
+    for group in parser.option_groups:
+        common_group = OptionGroup(common_parser, group.title, group.description)
+        for option in group.option_list:
+            if _is_common_help_option(option):
+                common_group.add_option(copy(option))
+        if common_group.option_list:
+            common_parser.add_option_group(common_group)
+
+    return common_parser
+
+
+def _show_common_help(option, option_string, value, parser: OptionParser) -> None:
+    _build_common_help_parser(parser).print_help()
+    parser.exit()
+
+
+def _show_all_help(option, option_string, value, parser: OptionParser) -> None:
+    parser.print_help()
+    parser.exit()
+
+
+def parse_arguments(arguments: list[str] | None = None) -> Values:
     usage = "Usage: %prog [-u|--url] target [-e|--extensions] extensions [options]"
     epilog = "See 'config.ini' for the example configuration file"
-    parser = OptionParser(usage=usage, epilog=epilog, version=f"dirsearch v{VERSION}")
+    parser = DirsearchOptionParser(
+        usage=usage,
+        epilog=epilog,
+        version=f"dirsearch v{VERSION}",
+        add_help_option=False,
+    )
+    parser.add_option(
+        "-h",
+        "--help",
+        action="callback",
+        callback=_show_common_help,
+        help="Show common options and exit",
+    )
+    parser.add_option(
+        "--help-all",
+        action="callback",
+        callback=_show_all_help,
+        help="Show all options and exit (short form: -hh)",
+    )
 
     # Mandatory arguments
     mandatory = OptionGroup(parser, "Mandatory")
@@ -774,6 +924,6 @@ def parse_arguments() -> Values:
     parser.add_option_group(advanced)
     parser.add_option_group(view)
     parser.add_option_group(output)
-    options, _ = parser.parse_args()
+    options, _ = parser.parse_args(arguments)
 
     return options
