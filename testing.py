@@ -26,6 +26,10 @@ from tests.connection.test_native_engine import TestNativeHttpEngine  # noqa: F4
 from tests.connection.test_native_response import TestNativeResponse  # noqa: F401
 from tests.connection.test_proxy import TestProxyErrors  # noqa: F401
 from tests.connection.test_proxy_integration import TestProxyIntegration  # noqa: F401
+from tests.connection.test_rate_limiter import (  # noqa: F401
+    TestAsyncRequestRateLimiter,
+    TestRequestRateLimiter,
+)
 from tests.connection.test_requester import (  # noqa: F401
     TestAsyncRequesterElapsed,
     TestAsyncRequesterSSLHandling,
@@ -35,6 +39,7 @@ from tests.connection.test_requester import (  # noqa: F401
     TestRequesterErrorClassification,
     TestRequesterPathPreservation,
     TestRequesterProxyRouting,
+    TestRequesterRateLimiting,
     TestRequesterSSLHandling,
     TestSSLHelpers,
 )
