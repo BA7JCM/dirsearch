@@ -22,7 +22,7 @@ import socket
 from lib.core.settings import SOCKET_TIMEOUT
 
 
-def detect_scheme(host, port):
+def detect_scheme(host, port, connect_host=None):
     if not port:
         raise ValueError
 
@@ -31,7 +31,7 @@ def detect_scheme(host, port):
     conn = ssl.create_default_context().wrap_socket(s, server_hostname=host)
 
     try:
-        conn.connect((host, port))
+        conn.connect((connect_host or host, port))
         return "https"
     except OSError:
         return "http"

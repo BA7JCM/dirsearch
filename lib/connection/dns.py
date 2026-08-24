@@ -18,24 +18,24 @@
 
 from __future__ import annotations
 
-from socket import getaddrinfo
-from typing import Any
-
-_dns_cache: dict[tuple[str, int], list[Any]] = {}
+import threading
 
 
-def cache_dns(domain: str, port: int, addr: str) -> None:
-    _dns_cache[domain, port] = getaddrinfo(addr, port)
+class DNSResolver:
+    """Requester-owned hostname overrides used by the --ip option."""
 
+    def __init__(self) -> None:
+        self._overrides: dict[tuple[str, int], str] = {}
+        self._lock = threading.Lock()
 
-def cached_getaddrinfo(*args: Any, **kwargs: int) -> list[Any]:
-    """
-    Replacement for socket.getaddrinfo, they are the same but this function
-    does cache the answer to improve the performance
-    """
+    @staticmethod
+    def _key(host: str, port: int) -> tuple[str, int]:
+        return host.rstrip(".").casefold(), port
 
-    host, port = args[:2]
-    if (host, port) not in _dns_cache:
-        _dns_cache[host, port] = getaddrinfo(*args, **kwargs)
+    def add_override(self, host: str, port: int, address: str) -> None:
+        with self._lock:
+            self._overrides[self._key(host, port)] = address
 
-    return _dns_cache[host, port]
+    def resolve(self, host: str, port: int) -> str:
+        with self._lock:
+            return self._overrides.get(self._key(host, port), host)

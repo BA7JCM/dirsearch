@@ -44,7 +44,7 @@ try:
 except ImportError:
     SSLCertVerificationError = None
 
-from lib.connection.dns import cached_getaddrinfo
+from lib.connection.dns import DNSResolver
 from lib.connection.proxy import (
     PROXY_AUTHENTICATION_REQUIRED,
     format_proxy_error,
@@ -70,9 +70,6 @@ from lib.utils.mimetype import guess_mimetype
 
 # Disable InsecureRequestWarning from urllib3
 urllib3.disable_warnings(urllib3.exceptions.SecurityWarning)
-# Use custom `socket.getaddrinfo` for `requests` which supports DNS caching
-socket.getaddrinfo = cached_getaddrinfo
-
 _request_target_state = threading.local()
 
 
@@ -85,7 +82,23 @@ def _join_request_target(base_url: str, quoted_path: str) -> str:
 # urllib3 encodes origin-form targets before writing them to the socket. Keep
 # the already-quoted dirsearch target for direct requests so fuzzed characters
 # such as malformed percent escapes and backslashes reach the server unchanged.
-class PathPreservingHTTPConnection(urllib3_connection.HTTPConnection):
+class _ScopedDNSConnection:
+    def __init__(self, *args, dns_resolver: DNSResolver, **kwargs):
+        self._dns_resolver = dns_resolver
+        super().__init__(*args, **kwargs)
+
+    def _new_conn(self):
+        original_host = self._dns_host
+        self._dns_host = self._dns_resolver.resolve(original_host, self.port)
+        try:
+            return super()._new_conn()
+        finally:
+            self._dns_host = original_host
+
+
+class PathPreservingHTTPConnection(
+    _ScopedDNSConnection, urllib3_connection.HTTPConnection
+):
     def request(self, method, url, body=None, headers=None, *args, **kwargs):
         target = getattr(_request_target_state, "target", None)
         if target:
@@ -94,7 +107,9 @@ class PathPreservingHTTPConnection(urllib3_connection.HTTPConnection):
         return super().request(method, url, body, headers, *args, **kwargs)
 
 
-class PathPreservingHTTPSConnection(urllib3_connection.HTTPSConnection):
+class PathPreservingHTTPSConnection(
+    _ScopedDNSConnection, urllib3_connection.HTTPSConnection
+):
     def request(self, method, url, body=None, headers=None, *args, **kwargs):
         target = getattr(_request_target_state, "target", None)
         if target:
@@ -111,18 +126,34 @@ class PathPreservingHTTPSConnectionPool(urllib3_connectionpool.HTTPSConnectionPo
     ConnectionCls = PathPreservingHTTPSConnection
 
 
+class PathPreservingPoolManager(urllib3_poolmanager.PoolManager):
+    def __init__(self, *args, dns_resolver: DNSResolver, **kwargs):
+        self._dns_resolver = dns_resolver
+        super().__init__(*args, **kwargs)
+        self.pool_classes_by_scheme = {
+            "http": PathPreservingHTTPConnectionPool,
+            "https": PathPreservingHTTPSConnectionPool,
+        }
+
+    def _new_pool(self, scheme, host, port, request_context=None):
+        pool = super()._new_pool(scheme, host, port, request_context)
+        pool.conn_kw["dns_resolver"] = self._dns_resolver
+        return pool
+
+
 class PathPreservingSocketOptionsAdapter(SocketOptionsAdapter):
+    def __init__(self, **kwargs):
+        self._dns_resolver = kwargs.pop("dns_resolver")
+        super().__init__(**kwargs)
+
     def init_poolmanager(self, connections, maxsize, block=False):
-        self.poolmanager = urllib3_poolmanager.PoolManager(
+        self.poolmanager = PathPreservingPoolManager(
             num_pools=connections,
             maxsize=maxsize,
             block=block,
             socket_options=self.socket_options,
+            dns_resolver=self._dns_resolver,
         )
-        self.poolmanager.pool_classes_by_scheme = {
-            "http": PathPreservingHTTPConnectionPool,
-            "https": PathPreservingHTTPSConnectionPool,
-        }
 
     def request_url(self, request: requests.PreparedRequest, proxies: dict[str, str]) -> str:
         target = getattr(request, "_dirsearch_request_target", None)
@@ -309,6 +340,7 @@ class BaseRequester:
     def __init__(self) -> None:
         self._url: str = ""
         self._query: str = ""
+        self._dns_resolver = DNSResolver()
         self._rate_limiter = RequestRateLimiter()
         self.proxy_cred = options["proxy_auth"]
         self.headers = CaseInsensitiveDict(options["headers"])
@@ -346,6 +378,9 @@ class BaseRequester:
 
     def set_query(self, query: str) -> None:
         self._query = query
+
+    def set_ip(self, host: str, port: int, address: str) -> None:
+        self._dns_resolver.add_override(host, port, address)
 
     def request_path(self, path: str) -> str:
         return append_query_string(path, getattr(self, "_query", ""))
@@ -386,6 +421,7 @@ class Requester(BaseRequester):
                     max_retries=0,
                     pool_maxsize=options["thread_count"],
                     socket_options=self._socket_options,
+                    dns_resolver=self._dns_resolver,
                 ),
             )
 
@@ -527,6 +563,39 @@ class HTTPXBearerAuth(httpx.Auth):
         yield request
 
 
+class ScopedDNSAsyncTransport(httpx.AsyncBaseTransport):
+    def __init__(
+        self,
+        transport: httpx.AsyncBaseTransport,
+        dns_resolver: DNSResolver,
+    ) -> None:
+        self._transport = transport
+        self._dns_resolver = dns_resolver
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        host = request.url.host
+        port = request.url.port
+        address = self._dns_resolver.resolve(host, port)
+        if address == host:
+            return await self._transport.handle_async_request(request)
+
+        extensions = dict(request.extensions)
+        if request.url.scheme == "https":
+            extensions["sni_hostname"] = host
+
+        resolved_request = httpx.Request(
+            request.method,
+            request.url.copy_with(host=address),
+            headers=request.headers.raw,
+            stream=request.stream,
+            extensions=extensions,
+        )
+        return await self._transport.handle_async_request(resolved_request)
+
+    async def aclose(self) -> None:
+        await self._transport.aclose()
+
+
 class ProxyRoatingTransport(httpx.AsyncBaseTransport):
     def __init__(self, proxies: list[str], **kwargs: Any) -> None:
         self._transports = [
@@ -556,7 +625,10 @@ class AsyncRequester(BaseRequester):
                 [self.parse_proxy(p) for p in options["proxies"]], **tpargs
             )
             if options["proxies"]
-            else httpx.AsyncHTTPTransport(**tpargs)
+            else ScopedDNSAsyncTransport(
+                httpx.AsyncHTTPTransport(**tpargs),
+                self._dns_resolver,
+            )
         )
 
         self.session = httpx.AsyncClient(
