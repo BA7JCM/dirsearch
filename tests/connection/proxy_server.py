@@ -97,7 +97,7 @@ class ForwardProxyHandler(BaseHTTPRequestHandler):
             upstream.close()
 
         self.send_response(response.status)
-        self.send_header("Content-Type", response.getheader("Content-Type", "text/plain"))
+        self.send_header("Content-Type", "text/plain")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Connection", "close")
         self.end_headers()
@@ -176,6 +176,7 @@ class LocalHTTPServer:
         self.server = RecordingHTTPServer(("127.0.0.1", 0), handler_class)
         if scheme == "https":
             context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            context.minimum_version = ssl.TLSVersion.TLSv1_2
             context.load_cert_chain(certificate, private_key)
             self.server.socket = context.wrap_socket(
                 self.server.socket,
