@@ -87,6 +87,7 @@
 - [partoneplay](https://github.com/partoneplay)
 - [xujiantop-crypto](https://github.com/xujiantop-crypto)
 - [mshzy](https://github.com/mshzy)
+- [ChrisJr404](https://github.com/ChrisJr404)
 
 
 Special thanks to all the people who are named here!

@@ -34,6 +34,12 @@ def main() -> None:
         WordlistTemplate,
     )
     from dirsearch.lib.core import settings
+    from dirsearch.lib.report.directory_response_store import DirectoryResponseStore
+    from dirsearch.lib.report.jsonl_response_store import JsonlResponseStore
+    from dirsearch.lib.report.response_store import (
+        BaseResponseStore,
+        create_response_stores,
+    )
 
     expected_version = read_source_version()
     installed_version = importlib.metadata.version("dirsearch")
@@ -45,6 +51,22 @@ def main() -> None:
     assert WordlistLimitError
     assert WordlistState
     assert WordlistTemplate
+    assert issubclass(DirectoryResponseStore, BaseResponseStore), (
+        DirectoryResponseStore.__mro__
+    )
+    assert issubclass(JsonlResponseStore, BaseResponseStore), (
+        JsonlResponseStore.__mro__
+    )
+
+    stores = create_response_stores(
+        os.path.join(temp_dir, "responses"),
+        os.path.join(temp_dir, "responses.jsonl"),
+    )
+    try:
+        assert all(isinstance(store, BaseResponseStore) for store in stores)
+    finally:
+        for store in stores:
+            store.close()
 
     package_root = Path(settings.__file__).resolve().parents[2]
     assert (package_root / "config.ini").is_file()

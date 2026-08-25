@@ -67,6 +67,11 @@ from lib.core.settings import (
 from lib.parse.rawrequest import parse_raw
 from lib.parse.url import clean_path, ensure_trailing_path_slash, parse_path
 from lib.report.manager import ReportManager
+from lib.report.response_store import (
+    BaseResponseStore,
+    ResponseArtifact,
+    create_response_stores,
+)
 from lib.utils.common import lstrip_once
 from lib.utils.crawl import Crawler
 from lib.utils.file import FileUtils
@@ -167,19 +172,23 @@ class Controller:
         self._handling_pause = False
         self._force_quit_handler = _create_force_quit_handler()
         self.loop = None  # Will be set if async mode is used
-
-        if options["session_file"]:
-            self._import(options["session_file"])
-            if not hasattr(self, "old_session"):
-                self.old_session = True
-        else:
-            self.setup()
-            self.old_session = False
+        self.response_stores = ()
 
         try:
+            if options["session_file"]:
+                self._import(options["session_file"])
+                if not hasattr(self, "old_session"):
+                    self.old_session = True
+            else:
+                self.setup()
+                self.old_session = False
+
             self.run()
         finally:
-            self._close_requester()
+            try:
+                self._close_requester()
+            finally:
+                self._close_response_stores()
 
     def _close_requester(self) -> None:
         requester = getattr(self, "requester", None)
@@ -238,6 +247,7 @@ class Controller:
             else:
                 last_output = ""
             session_store.apply_to_controller(self, payload)
+            self._prepare_response_stores()
             self._confirm_session_overwrite(session_file)
         except (OSError, KeyError, TypeError, UnpicklingError):
             interface.error(
@@ -332,6 +342,8 @@ class Controller:
                 )
                 sys.exit(1)
 
+        self._prepare_response_stores()
+
         interface.header(BANNER)
         interface.config(len(self.dictionary))
 
@@ -367,9 +379,14 @@ class Controller:
         #
         # error_callbacks callback values:
         #  - *args[0]: exception
-        match_callbacks = (
-            self.match_callback, self.reporter.save, self.reset_consecutive_errors
-        )
+        match_callbacks = [self.match_callback, self.reporter.save]
+        if self.response_stores:
+            match_callbacks.append(
+                self.save_response_async
+                if options["request_backend"] != "native" and options["async_mode"]
+                else self.save_response
+            )
+        match_callbacks.append(self.reset_consecutive_errors)
         not_found_callbacks = (
             self.update_progress_bar, self.reset_consecutive_errors
         )
@@ -387,7 +404,7 @@ class Controller:
             self.fuzzer = Fuzzer(
                 self.requester,
                 self.dictionary,
-                match_callbacks=match_callbacks,
+                match_callbacks=tuple(match_callbacks),
                 not_found_callbacks=not_found_callbacks,
                 error_callbacks=error_callbacks,
             )
@@ -611,6 +628,70 @@ class Controller:
 
     def reset_consecutive_errors(self, response: BaseResponse) -> None:
         self.consecutive_errors = 0
+
+    def _prepare_response_stores(self) -> None:
+        self.response_stores = ()
+        try:
+            self.response_stores = create_response_stores(
+                options["save_response"],
+                options["save_response_jsonl"],
+            )
+        except (OSError, ValueError) as error:
+            logger.exception(error)
+            interface.error(
+                f"Couldn't prepare response storage: {error}"
+            )
+            sys.exit(1)
+
+    def save_response(self, response: BaseResponse) -> None:
+        artifact = ResponseArtifact.from_response(response)
+        for store in self.response_stores:
+            try:
+                store.save(artifact)
+            except (OSError, ValueError) as error:
+                self._report_response_store_error(store, artifact, error)
+
+    async def save_response_async(self, response: BaseResponse) -> None:
+        artifact = ResponseArtifact.from_response(response)
+        await asyncio.gather(
+            *(
+                self._save_response_to_store_async(store, artifact)
+                for store in self.response_stores
+            )
+        )
+
+    async def _save_response_to_store_async(
+        self,
+        store: BaseResponseStore,
+        artifact: ResponseArtifact,
+    ) -> None:
+        try:
+            await store.save_async(artifact)
+        except (OSError, ValueError) as error:
+            self._report_response_store_error(store, artifact, error)
+
+    @staticmethod
+    def _report_response_store_error(
+        store: BaseResponseStore,
+        artifact: ResponseArtifact,
+        error: OSError | ValueError,
+    ) -> None:
+        logger.exception(error)
+        interface.error(
+            f"Couldn't save response for {artifact.url} to "
+            f"{store.name} store at {store.destination}: {error}"
+        )
+
+    def _close_response_stores(self) -> None:
+        for store in getattr(self, "response_stores", ()):
+            try:
+                store.close()
+            except OSError as error:
+                logger.exception(error)
+                interface.error(
+                    f"Couldn't close {store.name} response store at "
+                    f"{store.destination}: {error}"
+                )
 
     def match_callback(self, response: BaseResponse) -> None:
         if response.status in options["skip_on_status"]:

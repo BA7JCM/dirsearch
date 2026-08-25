@@ -105,17 +105,28 @@ class BaseResponse:
 
 
 class Response(BaseResponse):
-    def __init__(self, url, response: requests.Response, elapsed: float = 0.0) -> None:
+    def __init__(
+        self,
+        url,
+        response: requests.Response,
+        elapsed: float = 0.0,
+        capture_full_body: bool = False,
+    ) -> None:
         super().__init__(url, response, elapsed)
+        body = bytearray()
 
         for chunk in response.iter_content(chunk_size=ITER_CHUNK_SIZE):
-            self.body += chunk
+            remaining = MAX_RESPONSE_SIZE - len(body)
+            body.extend(chunk[:remaining])
 
-            if len(self.body) >= MAX_RESPONSE_SIZE or (
-                "content-length" in self.headers and is_binary(self.body)
+            if len(body) >= MAX_RESPONSE_SIZE or (
+                not capture_full_body
+                and "content-length" in self.headers
+                and is_binary(body)
             ):
                 break
 
+        self.body = bytes(body)
         if not is_binary(self.body):
             try:
                 self.content = self.body.decode(
@@ -127,16 +138,27 @@ class Response(BaseResponse):
 
 class AsyncResponse(BaseResponse):
     @classmethod
-    async def create(cls, url, response: httpx.Response, elapsed: float = 0.0) -> AsyncResponse:
+    async def create(
+        cls,
+        url,
+        response: httpx.Response,
+        elapsed: float = 0.0,
+        capture_full_body: bool = False,
+    ) -> AsyncResponse:
         self = cls(url, response, elapsed)
+        body = bytearray()
         async for chunk in response.aiter_bytes(chunk_size=ITER_CHUNK_SIZE):
-            self.body += chunk
+            remaining = MAX_RESPONSE_SIZE - len(body)
+            body.extend(chunk[:remaining])
 
-            if len(self.body) >= MAX_RESPONSE_SIZE or (
-                "content-length" in self.headers and is_binary(self.body)
+            if len(body) >= MAX_RESPONSE_SIZE or (
+                not capture_full_body
+                and "content-length" in self.headers
+                and is_binary(body)
             ):
                 break
 
+        self.body = bytes(body)
         if not is_binary(self.body):
             try:
                 self.content = self.body.decode(

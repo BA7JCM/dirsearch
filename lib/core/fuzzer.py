@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import re
 import threading
 import time
@@ -301,27 +302,28 @@ class BaseFuzzer:
             hash(body[:4096]),
         )
 
-    def process_response(self, path: str, response: BaseResponse) -> None:
+    def response_callbacks(
+        self, path: str, response: BaseResponse
+    ) -> tuple[Callable[[BaseResponse], Any], ...]:
         scanners = self.get_scanners_for(path)
 
         if self.is_excluded(response):
-            for callback in self.not_found_callbacks:
-                callback(response)
-            return
+            return self.not_found_callbacks
 
         for tester in scanners:
             # Check if the response is unique, not wildcard
             if not tester.check(path, response):
-                for callback in self.not_found_callbacks:
-                    callback(response)
-                return
+                return self.not_found_callbacks
 
         if options["filter_threshold"]:
             hash_ = hash(response)
             self._hashes.setdefault(hash_, 0)
             self._hashes[hash_] += 1
 
-        for callback in self.match_callbacks:
+        return self.match_callbacks
+
+    def process_response(self, path: str, response: BaseResponse) -> None:
+        for callback in self.response_callbacks(path, response):
             callback(response)
 
 
@@ -634,11 +636,19 @@ class AsyncFuzzer(BaseFuzzer):
         try:
             response = await self._requester.request(path)
         except RequestException as e:
-            for callback in self.error_callbacks:
-                callback(e)
+            await self.run_callbacks(self.error_callbacks, e)
             return
 
-        self.process_response(path, response)
+        await self.run_callbacks(self.response_callbacks(path, response), response)
+
+    @staticmethod
+    async def run_callbacks(
+        callbacks: tuple[Callable[[Any], Any], ...], value: Any
+    ) -> None:
+        for callback in callbacks:
+            result = callback(value)
+            if inspect.isawaitable(result):
+                await result
 
     async def task_proc(self) -> None:
         while True:

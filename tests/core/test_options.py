@@ -1,4 +1,6 @@
 import io
+import os
+import tempfile
 from contextlib import redirect_stdout
 from unittest import TestCase
 from unittest.mock import patch
@@ -7,6 +9,72 @@ from lib.core.options import parse_options
 
 
 class TestOptions(TestCase):
+    def test_save_response_cli_path_is_absolute(self):
+        args = [
+            "dirsearch.py",
+            "--wordlist-status",
+            "-e",
+            "php",
+            "--save-response",
+            "relative-responses",
+        ]
+
+        with patch("sys.argv", args):
+            parsed = parse_options()
+
+        self.assertEqual(
+            parsed["save_response"],
+            os.path.abspath("relative-responses"),
+        )
+
+    def test_save_response_jsonl_cli_path_is_absolute(self):
+        args = [
+            "dirsearch.py",
+            "--wordlist-status",
+            "-e",
+            "php",
+            "--save-response-jsonl",
+            "relative-responses.jsonl",
+        ]
+
+        with patch("sys.argv", args):
+            parsed = parse_options()
+
+        self.assertEqual(
+            parsed["save_response_jsonl"],
+            os.path.abspath("relative-responses.jsonl"),
+        )
+
+    def test_save_response_is_loaded_from_config(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = os.path.join(directory, "config.ini")
+            with open(config_path, "w", encoding="utf-8") as config:
+                config.write(
+                    "[output]\n"
+                    "save-response = configured-responses\n"
+                    "save-response-jsonl = configured-responses.jsonl\n"
+                )
+            args = [
+                "dirsearch.py",
+                "--wordlist-status",
+                "-e",
+                "php",
+                "--config",
+                config_path,
+            ]
+
+            with patch("sys.argv", args):
+                parsed = parse_options()
+
+        self.assertEqual(
+            parsed["save_response"],
+            os.path.abspath("configured-responses"),
+        )
+        self.assertEqual(
+            parsed["save_response_jsonl"],
+            os.path.abspath("configured-responses.jsonl"),
+        )
+
     def test_response_size_options_accept_raw_bytes_and_units(self):
         args = [
             "dirsearch.py",
