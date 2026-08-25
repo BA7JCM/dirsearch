@@ -19,7 +19,9 @@
 import asyncio
 import subprocess
 import sys
+import threading
 import warnings
+from concurrent.futures import ThreadPoolExecutor
 from unittest import TestCase
 from urllib.parse import urlsplit
 
@@ -59,6 +61,28 @@ class TestDNSIsolation(TestCase):
         self.assertEqual(first.resolve(FORCED_HOST, 443), "192.0.2.10")
         self.assertEqual(first.resolve(FORCED_HOST, 80), FORCED_HOST)
         self.assertEqual(second.resolve(FORCED_HOST, 443), FORCED_HOST)
+
+    def test_resolve_does_not_serialize_connection_workers(self):
+        barrier = threading.Barrier(2)
+
+        class ConcurrentReadMapping(dict):
+            def get(self, key, default=None):
+                barrier.wait(timeout=2)
+                return super().get(key, default)
+
+        resolver = DNSResolver()
+        resolver.add_override(FORCED_HOST, 443, "192.0.2.10")
+        resolver._overrides = ConcurrentReadMapping(resolver._overrides)
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(
+                executor.map(
+                    lambda _: resolver.resolve(FORCED_HOST, 443),
+                    range(2),
+                )
+            )
+
+        self.assertEqual(results, ["192.0.2.10", "192.0.2.10"])
 
 
 class TestDNSOverrideIntegration(TestCase):

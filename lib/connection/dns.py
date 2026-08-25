@@ -18,24 +18,24 @@
 
 from __future__ import annotations
 
-import threading
-
 
 class DNSResolver:
-    """Requester-owned hostname overrides used by the --ip option."""
+    """Requester-owned hostname overrides used by the --ip option.
+
+    The controller configures overrides between targets before request workers
+    start. Connection workers only read this mapping, so the hot path does not
+    require synchronization.
+    """
 
     def __init__(self) -> None:
         self._overrides: dict[tuple[str, int], str] = {}
-        self._lock = threading.Lock()
 
     @staticmethod
     def _key(host: str, port: int) -> tuple[str, int]:
         return host.rstrip(".").casefold(), port
 
     def add_override(self, host: str, port: int, address: str) -> None:
-        with self._lock:
-            self._overrides[self._key(host, port)] = address
+        self._overrides[self._key(host, port)] = address
 
     def resolve(self, host: str, port: int) -> str:
-        with self._lock:
-            return self._overrides.get(self._key(host, port), host)
+        return self._overrides.get(self._key(host, port), host)
