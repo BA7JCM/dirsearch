@@ -9,9 +9,11 @@ name = "dirsearch_native"
 crate-type = ["cdylib"]
 
 [dependencies]
+brotli = "8.0"
+flate2 = "1.1"
 indexmap = "2.7"
 pyo3 = { version = "0.24", features = ["extension-module", "abi3-py313"] }
 rayon = "1.10"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "http2"] }
 regex = "1.11"
-tokio = { version = "1.43", features = ["rt-multi-thread", "macros"] }
+tokio = { version = "1.43", features = ["rt-multi-thread", "macros", "net", "time"] }

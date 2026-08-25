@@ -6,9 +6,11 @@ from collections.abc import Iterable, Iterator, Mapping
 from datetime import date
 
 from lib.core.settings import (
+    ARCHIVE_EXTENSIONS,
     BACKUP_EXTENSIONS,
     DB_ENGINES,
     EXTENSION_TAG,
+    MEDIA_EXTENSIONS,
     WORDLIST_CATEGORIES,
     WORDLIST_CATEGORY_DIR,
 )
@@ -75,10 +77,49 @@ DEFAULT_PLACEHOLDERS: dict[str, tuple[str, ...]] = {
     "SEP": ("-", "_", ".", "/"),
     "DB": DB_ENGINES,
     "DB_ENGINE": DB_ENGINES,
+    "ARCHIVE": ARCHIVE_EXTENSIONS,
+    "ARCHIVE_EXT": ARCHIVE_EXTENSIONS,
     "BACKUP": BACKUP_EXTENSIONS,
     "BACKUP_EXT": BACKUP_EXTENSIONS,
     "API_VERSION": ("v1", "v2", "v3", "v4", "latest", "beta"),
 }
+
+
+def generate_backup_paths(path: str) -> Iterator[str]:
+    """Yield backup candidates for a discovered file path."""
+    directory, separator, filename = path.rpartition("/")
+    if not filename or not filename[-1].isalnum():
+        return
+
+    extension_separator = filename.rfind(".")
+    if extension_separator < 0 or extension_separator == len(filename) - 1:
+        return
+
+    if _has_extension(path, MEDIA_EXTENSIONS + BACKUP_EXTENSIONS):
+        return
+
+    candidates = [path + "~"]
+    candidates.extend(f"{path}.{extension}" for extension in BACKUP_EXTENSIONS)
+    if extension_separator > 0:
+        basename = filename[:extension_separator]
+        basename_path = f"{directory}{separator}{basename}"
+        candidates.extend(
+            f"{basename_path}.{extension}" for extension in BACKUP_EXTENSIONS
+        )
+
+    yielded = set()
+    for candidate in candidates:
+        if candidate in yielded:
+            continue
+        yielded.add(candidate)
+        yield candidate
+
+
+def _has_extension(path: str, extensions: Iterable[str]) -> bool:
+    lowercase_path = path.lower()
+    return lowercase_path.endswith(
+        tuple(f".{extension.lower()}" for extension in extensions)
+    )
 
 
 def normalize_placeholders(

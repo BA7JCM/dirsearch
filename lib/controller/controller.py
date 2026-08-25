@@ -31,7 +31,6 @@ from typing import Any
 
 from urllib.parse import urlparse
 
-from lib.connection.dns import cache_dns
 from lib.connection.response import BaseResponse
 from lib.core.data import blacklists, options
 from lib.core.decorators import locked
@@ -61,15 +60,19 @@ from lib.core.settings import (
     NEW_LINE,
     SIGINT_FORCE_QUIT_THRESHOLD,
     SIGINT_WINDOW_SECONDS,
-    STATIC_EXTENSIONS,
     STANDARD_PORTS,
     START_TIME,
     UNKNOWN,
 )
-from lib.core.wordlist_template import expand_template_line
+from lib.core.wordlist_template import generate_backup_paths
 from lib.parse.rawrequest import parse_raw
 from lib.parse.url import clean_path, ensure_trailing_path_slash, parse_path
 from lib.report.manager import ReportManager
+from lib.report.response_store import (
+    BaseResponseStore,
+    ResponseArtifact,
+    create_response_stores,
+)
 from lib.utils.common import lstrip_once
 from lib.utils.crawl import Crawler
 from lib.utils.file import FileUtils
@@ -170,16 +173,41 @@ class Controller:
         self._handling_pause = False
         self._force_quit_handler = _create_force_quit_handler()
         self.loop = None  # Will be set if async mode is used
+        self.response_stores = ()
 
-        if options["session_file"]:
-            self._import(options["session_file"])
-            if not hasattr(self, "old_session"):
-                self.old_session = True
-        else:
-            self.setup()
-            self.old_session = False
+        try:
+            if options["session_file"]:
+                self._import(options["session_file"])
+                if not hasattr(self, "old_session"):
+                    self.old_session = True
+            else:
+                self.setup()
+                self.old_session = False
 
-        self.run()
+            self.run()
+        finally:
+            try:
+                self._close_requester()
+            finally:
+                self._close_response_stores()
+
+    def _close_requester(self) -> None:
+        requester = getattr(self, "requester", None)
+        loop = getattr(self, "loop", None)
+
+        if requester is None:
+            if loop is not None:
+                loop.close()
+            return
+
+        if loop is None:
+            requester.close()
+            return
+
+        try:
+            loop.run_until_complete(requester.close())
+        finally:
+            loop.close()
 
     def _import(self, session_file: str) -> None:
         try:
@@ -220,6 +248,7 @@ class Controller:
             else:
                 last_output = ""
             session_store.apply_to_controller(self, payload)
+            self._prepare_response_stores()
             self._confirm_session_overwrite(session_file)
         except (OSError, KeyError, TypeError, UnpicklingError):
             interface.error(
@@ -314,6 +343,8 @@ class Controller:
                 )
                 sys.exit(1)
 
+        self._prepare_response_stores()
+
         interface.header(BANNER)
         interface.config(len(self.dictionary))
 
@@ -349,9 +380,14 @@ class Controller:
         #
         # error_callbacks callback values:
         #  - *args[0]: exception
-        match_callbacks = (
-            self.match_callback, self.reporter.save, self.reset_consecutive_errors
-        )
+        match_callbacks = [self.match_callback, self.reporter.save]
+        if self.response_stores:
+            match_callbacks.append(
+                self.save_response_async
+                if options["request_backend"] != "native" and options["async_mode"]
+                else self.save_response
+            )
+        match_callbacks.append(self.reset_consecutive_errors)
         not_found_callbacks = (
             self.update_progress_bar, self.reset_consecutive_errors
         )
@@ -369,7 +405,7 @@ class Controller:
             self.fuzzer = Fuzzer(
                 self.requester,
                 self.dictionary,
-                match_callbacks=match_callbacks,
+                match_callbacks=tuple(match_callbacks),
                 not_found_callbacks=not_found_callbacks,
                 error_callbacks=error_callbacks,
             )
@@ -457,33 +493,60 @@ class Controller:
                 self.old_session = False
 
     async def start_coroutines(self, start_time: float) -> None:
+        now = time.time()
+        time_limits = []
+
+        if options["max_time"] > 0:
+            time_limits.append(
+                (
+                    options["max_time"] - (now - self.start_time),
+                    QuitInterrupt("Runtime exceeded the maximum set by the user"),
+                )
+            )
+        if options["target_max_time"] > 0:
+            time_limits.append(
+                (
+                    options["target_max_time"] - (now - start_time),
+                    SkipTargetInterrupt(
+                        "Runtime for target exceeded the maximum set by the user"
+                    ),
+                )
+            )
+
+        for remaining, limit_error in time_limits:
+            if remaining <= 0:
+                raise limit_error
+
+        if time_limits:
+            timeout, timeout_error = min(time_limits, key=lambda limit: limit[0])
+        else:
+            timeout, timeout_error = None, None
+
         task = self.loop.create_task(self.fuzzer.start())
-        timeout = min(
-            t for t in [
-                options["max_time"] - (time.time() - self.start_time),
-                options["target_max_time"] - (time.time() - start_time),
-            ] if t > 0
-        ) if options["max_time"] or options["target_max_time"] else None
 
         try:
-            await asyncio.wait_for(
-                asyncio.wait(
-                    [self.pause_future, task],
-                    return_when=asyncio.FIRST_COMPLETED,
-                ),
-                timeout=timeout,
-            )
-        except asyncio.TimeoutError:
-            if time.time() - self.start_time > options["max_time"] > 0:
-                raise QuitInterrupt("Runtime exceeded the maximum set by the user")
+            try:
+                await asyncio.wait_for(
+                    asyncio.wait(
+                        [self.pause_future, task],
+                        return_when=asyncio.FIRST_COMPLETED,
+                    ),
+                    timeout=timeout,
+                )
+            except asyncio.TimeoutError:
+                if timeout_error is None:
+                    raise
+                raise timeout_error
 
-            raise SkipTargetInterrupt("Runtime for target exceeded the maximum set by the user")
+            if self.pause_future.done():
+                task.cancel()
+                await self.pause_future  # propagate the exception, if raised
 
-        if self.pause_future.done():
-            task.cancel()
-            await self.pause_future  # propagate the exception, if raised
-
-        await task  # propagate the exception, if raised
+            await task  # propagate the exception, if raised
+        finally:
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
 
     def process(self, start_time: float) -> None:
         while True:
@@ -530,21 +593,29 @@ class Controller:
         elif not 0 < port < 65536:
             raise InvalidURLException(f"Invalid port number: {port}")
 
-        if options["ip"]:
-            cache_dns(parsed.hostname, port, options["ip"])
-
         try:
             # If no scheme is found, detect it by port number
             scheme = (
                 parsed.scheme
                 if parsed.scheme != UNKNOWN
-                else detect_scheme(parsed.hostname, port)
+                else detect_scheme(
+                    parsed.hostname,
+                    port,
+                    connect_host=options["ip"],
+                )
             )
         except ValueError:
             # If the user neither provides the port nor scheme, guess them based
             # on standard website characteristics
-            scheme = detect_scheme(parsed.hostname, 443)
+            scheme = detect_scheme(
+                parsed.hostname,
+                443,
+                connect_host=options["ip"],
+            )
             port = STANDARD_PORTS[scheme]
+
+        if options["ip"]:
+            self.requester.set_ip(parsed.hostname, port, options["ip"])
 
         self.url = f"{scheme}://{parsed.hostname}"
 
@@ -558,6 +629,70 @@ class Controller:
 
     def reset_consecutive_errors(self, response: BaseResponse) -> None:
         self.consecutive_errors = 0
+
+    def _prepare_response_stores(self) -> None:
+        self.response_stores = ()
+        try:
+            self.response_stores = create_response_stores(
+                options["save_response"],
+                options["save_response_jsonl"],
+            )
+        except (OSError, ValueError) as error:
+            logger.exception(error)
+            interface.error(
+                f"Couldn't prepare response storage: {error}"
+            )
+            sys.exit(1)
+
+    def save_response(self, response: BaseResponse) -> None:
+        artifact = ResponseArtifact.from_response(response)
+        for store in self.response_stores:
+            try:
+                store.save(artifact)
+            except (OSError, ValueError) as error:
+                self._report_response_store_error(store, artifact, error)
+
+    async def save_response_async(self, response: BaseResponse) -> None:
+        artifact = ResponseArtifact.from_response(response)
+        await asyncio.gather(
+            *(
+                self._save_response_to_store_async(store, artifact)
+                for store in self.response_stores
+            )
+        )
+
+    async def _save_response_to_store_async(
+        self,
+        store: BaseResponseStore,
+        artifact: ResponseArtifact,
+    ) -> None:
+        try:
+            await store.save_async(artifact)
+        except (OSError, ValueError) as error:
+            self._report_response_store_error(store, artifact, error)
+
+    @staticmethod
+    def _report_response_store_error(
+        store: BaseResponseStore,
+        artifact: ResponseArtifact,
+        error: OSError | ValueError,
+    ) -> None:
+        logger.exception(error)
+        interface.error(
+            f"Couldn't save response for {artifact.url} to "
+            f"{store.name} store at {store.destination}: {error}"
+        )
+
+    def _close_response_stores(self) -> None:
+        for store in getattr(self, "response_stores", ()):
+            try:
+                store.close()
+            except OSError as error:
+                logger.exception(error)
+                interface.error(
+                    f"Couldn't close {store.name} response store at "
+                    f"{store.destination}: {error}"
+                )
 
     def match_callback(self, response: BaseResponse) -> None:
         if response.status in options["skip_on_status"]:
@@ -600,16 +735,11 @@ class Controller:
                 path = lstrip_once(path, self.base_path)
                 self.dictionary.add_extra(path)
 
-        if (
-            options["find_backup"]
-            and "." in response.path.split("/")[-1]
-            and response.path[-1].isalnum()
-            and not response.path.endswith(STATIC_EXTENSIONS)
-        ):
+        if options["find_backup"]:
             path = lstrip_once(response.path, self.base_path)
-            self.dictionary.add_extra(path + "~")
-            for backup in expand_template_line(path + ".%BACKUP%"):
-                self.dictionary.add_extra(backup)
+            for backup_path in generate_backup_paths(path):
+                if self.dictionary.is_valid(backup_path):
+                    self.dictionary.add_extra(backup_path)
 
     def update_progress_bar(self, response: BaseResponse) -> None:
         jobs_count = (

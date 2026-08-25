@@ -55,6 +55,7 @@ class Dictionary:
         # Items in self._extra will be cleared when self.reset() is called
         self._extra_index = 0
         self._extra = []
+        self._claimed = []
 
     @property
     def index(self) -> int:
@@ -71,14 +72,40 @@ class Dictionary:
         else:
             raise StopIteration
 
+    @locked
+    def claim_next(self) -> str:
+        """Return the next path and keep it recoverable until released."""
+        if len(self._extra) > self._extra_index:
+            path = self._extra[self._extra_index]
+            self._claimed.append(path)
+            self._extra_index += 1
+            return path
+        elif len(self._items) > self._index:
+            path = self._items[self._index]
+            self._claimed.append(path)
+            self._index += 1
+            return path
+        else:
+            raise StopIteration
+
+    @locked
+    def release_claim(self, path: str) -> None:
+        self._claimed.remove(path)
+
     def __contains__(self, item: str) -> bool:
         return item in self._items
 
-    def __getstate__(self) -> tuple[list[str], int]:
-        return self._items, self._index, self._extra, self._extra_index
+    def __getstate__(self) -> tuple[list[str], int, list[str], int]:
+        extra = (
+            self._extra[:self._extra_index]
+            + self._claimed
+            + self._extra[self._extra_index:]
+        )
+        return list(self._items), self._index, extra, self._extra_index
 
-    def __setstate__(self, state: tuple[list[str], int]) -> None:
+    def __setstate__(self, state: tuple[list[str], int, list[str], int]) -> None:
         self._items, self._index, self._extra, self._extra_index = state
+        self._claimed = []
 
     def __iter__(self) -> Iterator[str]:
         return iter(self._items)
@@ -118,3 +145,4 @@ class Dictionary:
     def reset(self) -> None:
         self._index = self._extra_index = 0
         self._extra.clear()
+        self._claimed.clear()

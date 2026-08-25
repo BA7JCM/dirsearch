@@ -1,10 +1,15 @@
 # Changelog
 
 ## [Unreleased]
-- Added option to find backup files
+- Added opt-in backup discovery for matched files.
+
+- Split CLI help into common (`-h` / `--help`) and complete (`-hh` / `--help-all`) views.
+- Documented the complete template wordlist placeholder reference.
+- Added extensible response stores with `--save-response` for raw files and `--save-response-jsonl` for versioned JSONL records.
 
 ## [0.5.0] - May 29, 2026
-This release includes all user-facing changes since the last published release, `v0.4.3`.
+This release includes all user-facing changes since the last published release,
+`v0.4.3`.
 
 ### Runtime and scanning
 - Raised the minimum supported Python version to 3.11 and prepared release builds on Python 3.14.

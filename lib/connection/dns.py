@@ -18,24 +18,24 @@
 
 from __future__ import annotations
 
-from socket import getaddrinfo
-from typing import Any
 
-_dns_cache: dict[tuple[str, int], list[Any]] = {}
+class DNSResolver:
+    """Requester-owned hostname overrides used by the --ip option.
 
-
-def cache_dns(domain: str, port: int, addr: str) -> None:
-    _dns_cache[domain, port] = getaddrinfo(addr, port)
-
-
-def cached_getaddrinfo(*args: Any, **kwargs: int) -> list[Any]:
-    """
-    Replacement for socket.getaddrinfo, they are the same but this function
-    does cache the answer to improve the performance
+    The controller configures overrides between targets before request workers
+    start. Connection workers only read this mapping, so the hot path does not
+    require synchronization.
     """
 
-    host, port = args[:2]
-    if (host, port) not in _dns_cache:
-        _dns_cache[host, port] = getaddrinfo(*args, **kwargs)
+    def __init__(self) -> None:
+        self._overrides: dict[tuple[str, int], str] = {}
 
-    return _dns_cache[host, port]
+    @staticmethod
+    def _key(host: str, port: int) -> tuple[str, int]:
+        return host.rstrip(".").casefold(), port
+
+    def add_override(self, host: str, port: int, address: str) -> None:
+        self._overrides[self._key(host, port)] = address
+
+    def resolve(self, host: str, port: int) -> str:
+        return self._overrides.get(self._key(host, port), host)

@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import re
 import threading
 import time
@@ -301,27 +302,28 @@ class BaseFuzzer:
             hash(body[:4096]),
         )
 
-    def process_response(self, path: str, response: BaseResponse) -> None:
+    def response_callbacks(
+        self, path: str, response: BaseResponse
+    ) -> tuple[Callable[[BaseResponse], Any], ...]:
         scanners = self.get_scanners_for(path)
 
         if self.is_excluded(response):
-            for callback in self.not_found_callbacks:
-                callback(response)
-            return
+            return self.not_found_callbacks
 
         for tester in scanners:
             # Check if the response is unique, not wildcard
             if not tester.check(path, response):
-                for callback in self.not_found_callbacks:
-                    callback(response)
-                return
+                return self.not_found_callbacks
 
         if options["filter_threshold"]:
             hash_ = hash(response)
             self._hashes.setdefault(hash_, 0)
             self._hashes[hash_] += 1
 
-        for callback in self.match_callbacks:
+        return self.match_callbacks
+
+    def process_response(self, path: str, response: BaseResponse) -> None:
+        for callback in self.response_callbacks(path, response):
             callback(response)
 
 
@@ -514,15 +516,19 @@ class NativeFuzzer(Fuzzer):
                 ):
                     if self._quit_event.is_set():
                         break
-                    if error is not None:
-                        for callback in self.error_callbacks:
-                            callback(error)
-                        continue
-                    if response.filtered:
-                        for callback in self.not_found_callbacks:
-                            callback(response)
-                        continue
-                    self.process_response(path, response)
+                    try:
+                        if error is not None:
+                            for callback in self.error_callbacks:
+                                callback(error)
+                            continue
+                        if response.filtered:
+                            for callback in self.not_found_callbacks:
+                                callback(response)
+                            continue
+                        self.process_response(path, response)
+                    finally:
+                        dictionary_path = lstrip_once(path, self._base_path)
+                        self._dictionary.release_claim(dictionary_path)
         finally:
             self._finished = True
 
@@ -531,13 +537,18 @@ class NativeFuzzer(Fuzzer):
         paths = []
         for _ in range(chunk_size):
             try:
-                paths.append(self._base_path + next(self._dictionary))
+                paths.append(self._base_path + self._dictionary.claim_next())
             except StopIteration:
                 break
         return paths
 
     def is_finished(self) -> bool:
         return self._finished
+
+    def quit(self) -> None:
+        super().quit()
+        if self._native_backend is not None:
+            self._native_backend.cancel()
 
 
 class AsyncFuzzer(BaseFuzzer):
@@ -625,22 +636,33 @@ class AsyncFuzzer(BaseFuzzer):
         try:
             response = await self._requester.request(path)
         except RequestException as e:
-            for callback in self.error_callbacks:
-                callback(e)
+            await self.run_callbacks(self.error_callbacks, e)
             return
 
-        self.process_response(path, response)
+        await self.run_callbacks(self.response_callbacks(path, response), response)
+
+    @staticmethod
+    async def run_callbacks(
+        callbacks: tuple[Callable[[Any], Any], ...], value: Any
+    ) -> None:
+        for callback in callbacks:
+            result = callback(value)
+            if inspect.isawaitable(result):
+                await result
 
     async def task_proc(self) -> None:
         while True:
             await self._play_event.wait()
 
             try:
-                path = next(self._dictionary)
+                path = self._dictionary.claim_next()
             except StopIteration:
                 return
 
-            async with self.sem:
-                await self.scan(self._base_path + path)
+            try:
+                async with self.sem:
+                    await self.scan(self._base_path + path)
+            finally:
+                self._dictionary.release_claim(path)
 
             await asyncio.sleep(options["delay"])

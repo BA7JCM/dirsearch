@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import os
 import tempfile
+from pathlib import Path
 from unittest import TestCase
 
 from lib.core.data import options
 from lib.core.dictionary import Dictionary
 from lib.core.exceptions import WordlistLimitError
+from lib.core.settings import ARCHIVE_EXTENSIONS, BACKUP_EXTENSIONS
+from lib.core.wordlist_template import DEFAULT_PLACEHOLDERS
 
 
 class TestDictionaryTemplates(TestCase):
@@ -69,6 +72,22 @@ class TestDictionaryTemplates(TestCase):
 
         self.assertEqual(list(dictionary), ["index.php", "index.json"])
 
+    def test_archive_placeholder_keeps_historical_values(self):
+        dictionary = self._dictionary("backup.%ARCHIVE%")
+
+        self.assertEqual(
+            list(dictionary),
+            [f"backup.{extension}" for extension in ARCHIVE_EXTENSIONS],
+        )
+
+    def test_backup_placeholder_includes_extended_values(self):
+        dictionary = self._dictionary("backup.%BACKUP%")
+
+        self.assertEqual(
+            list(dictionary),
+            [f"backup.{extension}" for extension in BACKUP_EXTENSIONS],
+        )
+
     def test_is_valid_filters_invalid_crawled_paths(self):
         options["exclude_extensions"] = ("zip",)
         dictionary = Dictionary(files=[])
@@ -83,3 +102,22 @@ class TestDictionaryTemplates(TestCase):
 
         with self.assertRaises(WordlistLimitError):
             self._dictionary("%CRUD_OP%_articles.php")
+
+    def test_wordlist_documentation_lists_all_supported_placeholders(self):
+        documentation = (
+            Path(__file__).parents[2] / "docs" / "wordlists.md"
+        ).read_text(encoding="utf-8")
+        placeholders = set(DEFAULT_PLACEHOLDERS) | {
+            "EXT",
+            "YYYY",
+            "YY",
+            "MM",
+            "DD",
+            "DATE",
+            "DATE_COMPACT",
+        }
+
+        for placeholder in sorted(placeholders):
+            with self.subTest(placeholder=placeholder):
+                self.assertIn(f"%{placeholder}%", documentation)
+        self.assertIn("%CATEGORY:name%", documentation)

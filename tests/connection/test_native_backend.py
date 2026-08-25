@@ -17,13 +17,28 @@ class FakeNativeResult:
     body = []
 
 
-class FakeNativeModule:
-    def __init__(self):
+class FakeNativeEngine:
+    def __init__(self, **config):
+        self.config = config
         self.calls = []
+        self.cancelled = False
 
-    def scan_http(self, *args, **kwargs):
+    def scan(self, *args, **kwargs):
         self.calls.append((args, kwargs))
         return [FakeNativeResult()]
+
+    def cancel(self):
+        self.cancelled = True
+
+
+class FakeNativeModule:
+    def __init__(self):
+        self.engines = []
+
+    def NativeHttpEngine(self, **config):
+        engine = FakeNativeEngine(**config)
+        self.engines.append(engine)
+        return engine
 
 
 class TestNativeHTTPBackend(TestCase):
@@ -83,11 +98,17 @@ class TestNativeHTTPBackend(TestCase):
         self.assertEqual(response.body, b"")
         self.assertEqual(response.length, 64)
 
-        args, kwargs = fake_native.calls[0]
+        self.assertEqual(len(fake_native.engines), 1)
+        engine = fake_native.engines[0]
+        self.assertEqual(engine.config["concurrency"], 7)
+        self.assertEqual(engine.config["timeout_secs"], 3.5)
+        self.assertEqual(
+            engine.config["proxies"],
+            ["http://user:password@127.0.0.1:8080"],
+        )
+
+        args, kwargs = engine.calls[0]
         self.assertEqual(args[:2], ("https://example.com/", ["missing%20page"]))
-        self.assertEqual(kwargs["concurrency"], 7)
-        self.assertEqual(kwargs["timeout_secs"], 3.5)
-        self.assertEqual(kwargs["proxies"], ["http://user:password@127.0.0.1:8080"])
         self.assertEqual(kwargs["include_status_codes"], [200, 204])
         self.assertEqual(kwargs["exclude_status_codes"], [500])
         self.assertEqual(kwargs["minimum_response_size"], 10)
@@ -103,3 +124,32 @@ class TestNativeHTTPBackend(TestCase):
         self.assertEqual(kwargs["match_header_regex"], "etag: .+")
         self.assertEqual(kwargs["filter_header_regex"], "x-cache: fallback-[0-9]+")
         self.assertEqual(kwargs["match_time"], [(">", 100.0)])
+
+    def test_reuses_engine_across_chunks_and_forwards_cancellation(self):
+        fake_native = FakeNativeModule()
+
+        with patch.dict("sys.modules", {"dirsearch_native": fake_native}):
+            backend = NativeHTTPBackend()
+            list(backend.scan("https://example.com/", ["first"]))
+            list(backend.scan("https://example.com/", ["second"]))
+            backend.cancel()
+
+        self.assertEqual(len(fake_native.engines), 1)
+        self.assertEqual(len(fake_native.engines[0].calls), 2)
+        self.assertTrue(fake_native.engines[0].cancelled)
+
+    def test_origin_407_remains_a_response_without_a_proxy(self):
+        fake_native = FakeNativeModule()
+        options["proxies"] = []
+
+        with (
+            patch.dict("sys.modules", {"dirsearch_native": fake_native}),
+            patch.object(FakeNativeResult, "status", 407),
+        ):
+            backend = NativeHTTPBackend()
+            rows = list(backend.scan("https://example.com/", ["admin"]))
+
+        self.assertEqual(len(rows), 1)
+        _, response, error = rows[0]
+        self.assertIsNone(error)
+        self.assertEqual(response.status, 407)

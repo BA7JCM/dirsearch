@@ -3,6 +3,12 @@ from __future__ import annotations
 from collections.abc import Iterable, Iterator
 from typing import Any
 
+from lib.connection.proxy import (
+    PROXY_AUTHENTICATION_REQUIRED,
+    format_proxy_error,
+    is_proxy_connect_rejection,
+    proxy_error_status,
+)
 from lib.connection.response import NativeResponse
 from lib.core.data import options
 from lib.core.exceptions import RequestException
@@ -20,6 +26,25 @@ class NativeHTTPBackend:
             raise RequestException(get_native_backend_install_error()) from e
 
         self._native = dirsearch_native
+        self._engine = None
+        self._engine_config = None
+
+    def _get_engine(self):
+        config = {
+            "concurrency": options["thread_count"],
+            "timeout_secs": options["timeout"],
+            "headers": list(options["headers"].items()),
+            "proxies": self._proxy_urls(),
+            "follow_redirects": options["follow_redirects"],
+        }
+        if self._engine is None or config != self._engine_config:
+            self._engine = self._native.NativeHttpEngine(**config)
+            self._engine_config = config
+        return self._engine
+
+    def cancel(self) -> None:
+        if self._engine is not None:
+            self._engine.cancel()
 
     def scan(
         self,
@@ -30,22 +55,33 @@ class NativeHTTPBackend:
         raw_paths = list(paths)
         request_paths = [append_query_string(path, query) for path in raw_paths]
         quoted_paths = [safequote(path) for path in request_paths]
-        results = self._native.scan_http(
+        results = self._get_engine().scan(
             base_url,
             quoted_paths,
-            concurrency=options["thread_count"],
-            timeout_secs=options["timeout"],
-            headers=list(options["headers"].items()),
-            proxies=self._proxy_urls(),
             max_retries=options["max_retries"],
-            follow_redirects=options["follow_redirects"],
             max_body_size=MAX_RESPONSE_SIZE,
             **self._filter_options(),
         )
 
         for path, quoted_path, result in zip(raw_paths, quoted_paths, results):
             if result.error is not None:
-                yield path, None, RequestException(result.error)
+                error_message = result.error
+                if (
+                    options["proxies"]
+                    and (
+                        proxy_error_status(error_message) is not None
+                        or is_proxy_connect_rejection(error_message)
+                    )
+                ):
+                    error_message = format_proxy_error(error_message)
+                yield path, None, RequestException(error_message)
+                continue
+
+            if (
+                options["proxies"]
+                and result.status == PROXY_AUTHENTICATION_REQUIRED
+            ):
+                yield path, None, RequestException("Proxy authentication required")
                 continue
 
             yield (

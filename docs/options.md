@@ -1,11 +1,15 @@
 # CLI Options
 
+Use `-h` or `--help` for common options. The complete reference below is
+available from `-hh` or `--help-all`.
+
 ```text
 Usage: dirsearch.py [-u|--url] target [-e|--extensions] extensions [options]
 
 Options:
   --version             show program's version number and exit
-  -h, --help            show this help message and exit
+  -h, --help            Show common options and exit
+  --help-all            Show all options and exit (short form: -hh)
 
   Mandatory:
     -u URL, --url=URL   Target URL(s), can use multiple flags
@@ -222,6 +226,7 @@ Options:
 
   Advanced Settings:
     --crawl             Crawl for new paths in responses
+    --find-backup       Look for backups of discovered files
 
   View Settings:
     --full-url          Full URLs in the output (enabled automatically in
@@ -245,6 +250,10 @@ Options:
     --postgres-url=URL  Database URL for PostgreSQL output (Format:
                         postgres://[username:password@]host[:port]/database-
                         name)
+    --save-response=PATH
+                        Save matched response bodies into a directory
+    --save-response-jsonl=PATH
+                        Append matched responses to a JSONL file
     --log=PATH          Log file
 
 See 'config.ini' for the example configuration file

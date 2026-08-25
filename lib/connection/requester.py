@@ -18,7 +18,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import http.client
 import random
 import re
@@ -45,7 +44,13 @@ try:
 except ImportError:
     SSLCertVerificationError = None
 
-from lib.connection.dns import cached_getaddrinfo
+from lib.connection.dns import DNSResolver
+from lib.connection.proxy import (
+    PROXY_AUTHENTICATION_REQUIRED,
+    format_proxy_error,
+    proxy_error_status,
+)
+from lib.connection.rate_limiter import RequestRateLimiter
 from lib.connection.response import AsyncResponse, Response
 from lib.core.data import options
 from lib.core.decorators import cached
@@ -65,9 +70,6 @@ from lib.utils.mimetype import guess_mimetype
 
 # Disable InsecureRequestWarning from urllib3
 urllib3.disable_warnings(urllib3.exceptions.SecurityWarning)
-# Use custom `socket.getaddrinfo` for `requests` which supports DNS caching
-socket.getaddrinfo = cached_getaddrinfo
-
 _request_target_state = threading.local()
 
 
@@ -80,7 +82,23 @@ def _join_request_target(base_url: str, quoted_path: str) -> str:
 # urllib3 encodes origin-form targets before writing them to the socket. Keep
 # the already-quoted dirsearch target for direct requests so fuzzed characters
 # such as malformed percent escapes and backslashes reach the server unchanged.
-class PathPreservingHTTPConnection(urllib3_connection.HTTPConnection):
+class _ScopedDNSConnection:
+    def __init__(self, *args, dns_resolver: DNSResolver, **kwargs):
+        self._dns_resolver = dns_resolver
+        super().__init__(*args, **kwargs)
+
+    def _new_conn(self):
+        original_host = self._dns_host
+        self._dns_host = self._dns_resolver.resolve(original_host, self.port)
+        try:
+            return super()._new_conn()
+        finally:
+            self._dns_host = original_host
+
+
+class PathPreservingHTTPConnection(
+    _ScopedDNSConnection, urllib3_connection.HTTPConnection
+):
     def request(self, method, url, body=None, headers=None, *args, **kwargs):
         target = getattr(_request_target_state, "target", None)
         if target:
@@ -89,7 +107,9 @@ class PathPreservingHTTPConnection(urllib3_connection.HTTPConnection):
         return super().request(method, url, body, headers, *args, **kwargs)
 
 
-class PathPreservingHTTPSConnection(urllib3_connection.HTTPSConnection):
+class PathPreservingHTTPSConnection(
+    _ScopedDNSConnection, urllib3_connection.HTTPSConnection
+):
     def request(self, method, url, body=None, headers=None, *args, **kwargs):
         target = getattr(_request_target_state, "target", None)
         if target:
@@ -106,18 +126,34 @@ class PathPreservingHTTPSConnectionPool(urllib3_connectionpool.HTTPSConnectionPo
     ConnectionCls = PathPreservingHTTPSConnection
 
 
+class PathPreservingPoolManager(urllib3_poolmanager.PoolManager):
+    def __init__(self, *args, dns_resolver: DNSResolver, **kwargs):
+        self._dns_resolver = dns_resolver
+        super().__init__(*args, **kwargs)
+        self.pool_classes_by_scheme = {
+            "http": PathPreservingHTTPConnectionPool,
+            "https": PathPreservingHTTPSConnectionPool,
+        }
+
+    def _new_pool(self, scheme, host, port, request_context=None):
+        pool = super()._new_pool(scheme, host, port, request_context)
+        pool.conn_kw["dns_resolver"] = self._dns_resolver
+        return pool
+
+
 class PathPreservingSocketOptionsAdapter(SocketOptionsAdapter):
+    def __init__(self, **kwargs):
+        self._dns_resolver = kwargs.pop("dns_resolver")
+        super().__init__(**kwargs)
+
     def init_poolmanager(self, connections, maxsize, block=False):
-        self.poolmanager = urllib3_poolmanager.PoolManager(
+        self.poolmanager = PathPreservingPoolManager(
             num_pools=connections,
             maxsize=maxsize,
             block=block,
             socket_options=self.socket_options,
+            dns_resolver=self._dns_resolver,
         )
-        self.poolmanager.pool_classes_by_scheme = {
-            "http": PathPreservingHTTPConnectionPool,
-            "https": PathPreservingHTTPSConnectionPool,
-        }
 
     def request_url(self, request: requests.PreparedRequest, proxies: dict[str, str]) -> str:
         target = getattr(request, "_dirsearch_request_target", None)
@@ -199,6 +235,7 @@ def _is_timeout_error(exc: Exception) -> bool:
             (
                 requests.exceptions.Timeout,
                 urllib3.exceptions.TimeoutError,
+                httpx.TimeoutException,
                 socket.timeout,
             ),
         ):
@@ -303,7 +340,8 @@ class BaseRequester:
     def __init__(self) -> None:
         self._url: str = ""
         self._query: str = ""
-        self._rate = 0
+        self._dns_resolver = DNSResolver()
+        self._rate_limiter = RequestRateLimiter()
         self.proxy_cred = options["proxy_auth"]
         self.headers = CaseInsensitiveDict(options["headers"])
         self.agents: list[str] = []
@@ -341,26 +379,22 @@ class BaseRequester:
     def set_query(self, query: str) -> None:
         self._query = query
 
+    def set_ip(self, host: str, port: int, address: str) -> None:
+        self._dns_resolver.add_override(host, port, address)
+
     def request_path(self, path: str) -> str:
         return append_query_string(path, getattr(self, "_query", ""))
 
     def set_header(self, key: str, value: str) -> None:
         self.headers[key] = value.lstrip()
 
-    def is_rate_exceeded(self) -> bool:
-        return self._rate >= options["max_rate"] > 0
-
-    def decrease_rate(self) -> None:
-        self._rate -= 1
-
-    def increase_rate(self) -> None:
-        self._rate += 1
-        threading.Timer(1, self.decrease_rate).start()
+    def wait_for_rate_limit(self) -> None:
+        self._rate_limiter.wait(options["max_rate"])
 
     @property
     @cached(RATE_UPDATE_DELAY)
     def rate(self) -> int:
-        return self._rate
+        return self._rate_limiter.rate
 
 
 class HTTPBearerAuth(AuthBase):
@@ -387,6 +421,7 @@ class Requester(BaseRequester):
                     max_retries=0,
                     pool_maxsize=options["thread_count"],
                     socket_options=self._socket_options,
+                    dns_resolver=self._dns_resolver,
                 ),
             )
 
@@ -410,13 +445,12 @@ class Requester(BaseRequester):
             else:
                 self.session.auth = HttpNtlmAuth(user, password)
 
+    def close(self) -> None:
+        self.session.close()
+
     # :path: is expected not to start with "/"
     def request(self, path: str, proxy: str | None = None) -> Response:
-        # Pause if the request rate exceeded the maximum
-        while self.is_rate_exceeded():
-            time.sleep(0.1)
-
-        self.increase_rate()
+        self.wait_for_rate_limit()
 
         err_msg = None
         request_path = self.request_path(path)
@@ -436,9 +470,8 @@ class Requester(BaseRequester):
                         # socks5://localhost:9050 => socks5://[credential]@localhost:9050
                         proxy_url = proxy_url.replace("://", f"://{self.proxy_cred}@", 1)
 
+                    proxies["http"] = proxy_url
                     proxies["https"] = proxy_url
-                    if not proxy_url.startswith("https://"):
-                        proxies["http"] = proxy_url
                 except IndexError:
                     pass
 
@@ -467,7 +500,23 @@ class Requester(BaseRequester):
                     proxies=proxies,
                     stream=True,
                 )
-                response = Response(url, origin_response)
+                try:
+                    if (
+                        proxies
+                        and origin_response.status_code
+                        == PROXY_AUTHENTICATION_REQUIRED
+                    ):
+                        raise RequestException("Proxy authentication required")
+                    response = Response(
+                        url,
+                        origin_response,
+                        capture_full_body=bool(
+                            options["save_response"]
+                            or options["save_response_jsonl"]
+                        ),
+                    )
+                finally:
+                    origin_response.close()
                 response.elapsed = time.perf_counter() - start_time
 
                 log_msg = f'"{options["http_method"]} {response.url}" {response.status} - {response.length}B'
@@ -479,29 +528,27 @@ class Requester(BaseRequester):
 
                 return response
 
+            except RequestException:
+                raise
             except Exception as e:
                 logger.exception(e)
 
                 if e == socket.gaierror:
                     err_msg = "Couldn't resolve DNS"
+                elif _is_timeout_error(e):
+                    err_msg = f"Request timeout: {url}"
                 elif _is_ssl_error(e):
                     err_msg = _format_ssl_error(e, url)
                 elif isinstance(e, requests.exceptions.TooManyRedirects):
                     err_msg = f"Too many redirects: {url}"
-                elif "ProxyError" in str(e):
-                    if proxy:
-                        err_msg = f"Error with the proxy: {proxy}"
-                    else:
-                        err_msg = "Error with the system proxy"
-                    # Prevent from reusing it in the future
-                    if proxy in options["proxies"] and len(options["proxies"]) > 1:
-                        options["proxies"].remove(proxy)
+                elif isinstance(e, requests.exceptions.ProxyError):
+                    err_msg = format_proxy_error(e)
+                    if proxy_error_status(e) in (407, 429):
+                        raise RequestException(err_msg) from e
                 elif "InvalidURL" in str(e):
                     err_msg = f"Invalid URL: {url}"
                 elif "InvalidProxyURL" in str(e):
                     err_msg = f"Invalid proxy URL: {proxy}"
-                elif _is_timeout_error(e):
-                    err_msg = f"Request timeout: {url}"
                 elif _is_response_read_error(e):
                     err_msg = f"Failed to read response body: {url}"
                 elif "ConnectionError" in str(e):
@@ -523,6 +570,39 @@ class HTTPXBearerAuth(httpx.Auth):
         yield request
 
 
+class ScopedDNSAsyncTransport(httpx.AsyncBaseTransport):
+    def __init__(
+        self,
+        transport: httpx.AsyncBaseTransport,
+        dns_resolver: DNSResolver,
+    ) -> None:
+        self._transport = transport
+        self._dns_resolver = dns_resolver
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        host = request.url.host
+        port = request.url.port
+        address = self._dns_resolver.resolve(host, port)
+        if address == host:
+            return await self._transport.handle_async_request(request)
+
+        extensions = dict(request.extensions)
+        if request.url.scheme == "https":
+            extensions["sni_hostname"] = host
+
+        resolved_request = httpx.Request(
+            request.method,
+            request.url.copy_with(host=address),
+            headers=request.headers.raw,
+            stream=request.stream,
+            extensions=extensions,
+        )
+        return await self._transport.handle_async_request(resolved_request)
+
+    async def aclose(self) -> None:
+        await self._transport.aclose()
+
+
 class ProxyRoatingTransport(httpx.AsyncBaseTransport):
     def __init__(self, proxies: list[str], **kwargs: Any) -> None:
         self._transports = [
@@ -530,7 +610,9 @@ class ProxyRoatingTransport(httpx.AsyncBaseTransport):
         ]
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
-        request.extensions["target"] = str(request.url).encode()
+        # Let httpcore choose absolute-form for forwarding and authority/origin-form
+        # for CONNECT tunnels. A custom target overrides all three request forms.
+        request.extensions.pop("target", None)
         transport = random.choice(self._transports)
         return await transport.handle_async_request(request)
 
@@ -550,7 +632,10 @@ class AsyncRequester(BaseRequester):
                 [self.parse_proxy(p) for p in options["proxies"]], **tpargs
             )
             if options["proxies"]
-            else httpx.AsyncHTTPTransport(**tpargs)
+            else ScopedDNSAsyncTransport(
+                httpx.AsyncHTTPTransport(**tpargs),
+                self._dns_resolver,
+            )
         )
 
         self.session = httpx.AsyncClient(
@@ -562,7 +647,7 @@ class AsyncRequester(BaseRequester):
         if options["auth"]:
             self.set_auth(options["auth_type"], options["auth"])
 
-    def parse_proxy(self, proxy: str) -> str:
+    def parse_proxy(self, proxy: str) -> str | httpx.Proxy | None:
         if not proxy:
             return None
 
@@ -572,6 +657,12 @@ class AsyncRequester(BaseRequester):
         if self.proxy_cred and "@" not in proxy:
             # socks5://localhost:9050 => socks5://[credential]@localhost:9050
             proxy = proxy.replace("://", f"://{self.proxy_cred}@", 1)
+
+        if proxy.startswith("https://"):
+            proxy_ssl_context = ssl.create_default_context()
+            proxy_ssl_context.check_hostname = False
+            proxy_ssl_context.verify_mode = ssl.CERT_NONE
+            return httpx.Proxy(proxy, ssl_context=proxy_ssl_context)
 
         return proxy
 
@@ -592,6 +683,13 @@ class AsyncRequester(BaseRequester):
             else:
                 self.session.auth = HttpxNtlmAuth(user, password)
 
+    async def close(self) -> None:
+        try:
+            if self.replay_session is not None:
+                await self.replay_session.aclose()
+        finally:
+            await self.session.aclose()
+
     async def replay_request(self, path: str, proxy: str) -> AsyncResponse:
         if self.replay_session is None:
             transport = httpx.AsyncHTTPTransport(
@@ -611,16 +709,14 @@ class AsyncRequester(BaseRequester):
     async def request(
         self, path: str, session: httpx.AsyncClient | None = None, replay: bool = False
     ) -> AsyncResponse:
-        while self.is_rate_exceeded():
-            await asyncio.sleep(0.1)
-
-        self.increase_rate()
+        await self.wait_for_rate_limit()
 
         err_msg = None
         request_path = self.request_path(path)
         quoted_request_path = safequote(request_path)
         url = self._url + quoted_request_path
         session = session or self.session
+        using_proxy = replay or bool(options["proxies"])
 
         for _ in range(options["max_retries"] + 1):
             try:
@@ -648,8 +744,23 @@ class AsyncRequester(BaseRequester):
                     stream=True,
                     follow_redirects=options["follow_redirects"],
                 )
-                response = await AsyncResponse.create(url, xresponse)
-                await xresponse.aclose()
+                try:
+                    if (
+                        using_proxy
+                        and xresponse.status_code
+                        == PROXY_AUTHENTICATION_REQUIRED
+                    ):
+                        raise RequestException("Proxy authentication required")
+                    response = await AsyncResponse.create(
+                        url,
+                        xresponse,
+                        capture_full_body=bool(
+                            options["save_response"]
+                            or options["save_response_jsonl"]
+                        ),
+                    )
+                finally:
+                    await xresponse.aclose()
                 # Measure the whole streamed request lifecycle so sync and async
                 # modes report the same thing.
                 response.elapsed = time.perf_counter() - start_time
@@ -663,10 +774,14 @@ class AsyncRequester(BaseRequester):
 
                 return response
 
+            except RequestException:
+                raise
             except Exception as e:
                 logger.exception(e)
 
-                if isinstance(e, httpx.ConnectError) and not _is_ssl_error(e):
+                if _is_timeout_error(e):
+                    err_msg = f"Request timeout: {url}"
+                elif isinstance(e, httpx.ConnectError) and not _is_ssl_error(e):
                     if str(e).startswith("[Errno -2]"):
                         err_msg = "Couldn't resolve DNS"
                     else:
@@ -676,11 +791,11 @@ class AsyncRequester(BaseRequester):
                 elif isinstance(e, httpx.TooManyRedirects):
                     err_msg = f"Too many redirects: {url}"
                 elif isinstance(e, httpx.ProxyError):
-                    err_msg = "Cannot establish the proxy connection"
+                    err_msg = format_proxy_error(e)
+                    if proxy_error_status(e) in (407, 429):
+                        raise RequestException(err_msg) from e
                 elif isinstance(e, httpx.InvalidURL):
                     err_msg = f"Invalid URL: {url}"
-                elif isinstance(e, httpx.TimeoutException):
-                    err_msg = f"Request timeout: {url}"
                 elif _is_response_read_error(e):
                     err_msg = f"Failed to read response body: {url}"
                 else:
@@ -688,6 +803,5 @@ class AsyncRequester(BaseRequester):
 
         raise RequestException(err_msg)
 
-    def increase_rate(self) -> None:
-        self._rate += 1
-        asyncio.get_running_loop().call_later(1, self.decrease_rate)
+    async def wait_for_rate_limit(self) -> None:
+        await self._rate_limiter.wait_async(options["max_rate"])

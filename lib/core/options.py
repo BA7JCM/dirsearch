@@ -370,6 +370,12 @@ def parse_options() -> dict[str, Any]:
     if opt.output_file:
         opt.output_file = FileUtils.get_abs_path(opt.output_file)
 
+    if opt.save_response:
+        opt.save_response = FileUtils.get_abs_path(opt.save_response)
+
+    if opt.save_response_jsonl:
+        opt.save_response_jsonl = FileUtils.get_abs_path(opt.save_response_jsonl)
+
     if opt.request_backend == "native":
         if error := get_native_request_backend_error(opt):
             print(error)
@@ -742,7 +748,9 @@ def merge_config(opt: Values) -> Values:
 
     # Advanced
     opt.crawl = opt.crawl or config.safe_getboolean("advanced", "crawl")
-    opt.find_backup = opt.find_backup or config.safe_getboolean("advanced", "find-backup")
+    opt.find_backup = opt.find_backup or config.safe_getboolean(
+        "advanced", "find-backup"
+    )
 
     # View
     opt.full_url = opt.full_url or config.safe_getboolean("view", "full-url")
@@ -761,6 +769,12 @@ def merge_config(opt: Values) -> Values:
     opt.output_table = config.safe_get("output", "output-sql-table")
     opt.output_formats = opt.output_formats or config.safe_get(
         "output", "output-formats", "plain"
+    )
+    opt.save_response = opt.save_response or config.safe_get(
+        "output", "save-response"
+    )
+    opt.save_response_jsonl = opt.save_response_jsonl or config.safe_get(
+        "output", "save-response-jsonl"
     )
     opt.log_file = opt.log_file or config.safe_get("output", "log-file")
     opt.log_file_size = config.safe_getint("output", "log-file-size")

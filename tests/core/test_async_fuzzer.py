@@ -1,7 +1,9 @@
+import asyncio
 from unittest import IsolatedAsyncioTestCase
 
 from lib.connection.response import NativeResponse
 from lib.core.data import blacklists, options
+from lib.core.dictionary import Dictionary
 from lib.core.fuzzer import AsyncFuzzer
 
 
@@ -18,6 +20,12 @@ class DummyDictionary:
 
     def __len__(self):
         return len(self.paths)
+
+    def claim_next(self):
+        return next(self)
+
+    def release_claim(self, path):
+        return None
 
 
 class DummyAsyncRequester:
@@ -36,6 +44,25 @@ class DummyAsyncRequester:
             [("Content-Type", "text/plain")],
             b"not found",
         )
+
+
+class BlockingAsyncRequester:
+    def __init__(self):
+        self.started = asyncio.Event()
+
+    async def request(self, path):
+        self.started.set()
+        await asyncio.Event().wait()
+
+
+def make_dictionary(paths):
+    dictionary = object.__new__(Dictionary)
+    dictionary._items = list(paths)
+    dictionary._index = 0
+    dictionary._extra = []
+    dictionary._extra_index = 0
+    dictionary._claimed = []
+    return dictionary
 
 
 class TestAsyncFuzzer(IsolatedAsyncioTestCase):
@@ -88,3 +115,52 @@ class TestAsyncFuzzer(IsolatedAsyncioTestCase):
         self.assertEqual([response.full_path for response in matches], ["home.html"])
         self.assertEqual(misses, [])
         self.assertEqual(errors, [])
+
+    async def test_saved_state_retries_cancelled_in_flight_path(self):
+        dictionary = make_dictionary(["admin", "login"])
+        requester = BlockingAsyncRequester()
+        fuzzer = AsyncFuzzer(
+            requester,
+            dictionary,
+            match_callbacks=(),
+            not_found_callbacks=(),
+            error_callbacks=(),
+        )
+
+        async def skip_scanners():
+            return None
+
+        fuzzer.setup_scanners = skip_scanners
+        run_task = asyncio.create_task(fuzzer.start())
+        await requester.started.wait()
+
+        saved_state = dictionary.__getstate__()
+        run_task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await run_task
+
+        resumed = object.__new__(Dictionary)
+        resumed.__setstate__(saved_state)
+        self.assertEqual([next(resumed), next(resumed)], ["admin", "login"])
+        with self.assertRaises(StopIteration):
+            next(resumed)
+
+    async def test_awaits_async_match_callbacks(self):
+        dictionary = DummyDictionary(["home.html"])
+        callback_finished = asyncio.Event()
+
+        async def save_match(response):
+            await asyncio.sleep(0)
+            callback_finished.set()
+
+        fuzzer = AsyncFuzzer(
+            DummyAsyncRequester(),
+            dictionary,
+            match_callbacks=(save_match,),
+            not_found_callbacks=(),
+            error_callbacks=(),
+        )
+
+        await fuzzer.start()
+
+        self.assertTrue(callback_finished.is_set())

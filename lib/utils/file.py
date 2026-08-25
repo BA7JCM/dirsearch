@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import os
 import os.path
+import tempfile
 
 
 class File:
@@ -134,6 +135,10 @@ class FileUtils:
         return os.path.isfile(path)
 
     @staticmethod
+    def is_link(path):
+        return os.path.islink(path)
+
+    @staticmethod
     def parent(path, depth=1):
         for _ in range(depth):
             path = os.path.dirname(path)
@@ -144,6 +149,105 @@ class FileUtils:
     def create_dir(cls, directory):
         if not cls.exists(directory):
             os.makedirs(directory, exist_ok=True)
+
+    @classmethod
+    def create_writable_dir(cls, directory: str) -> None:
+        """Create a directory and prove that files can be created inside it."""
+        cls.create_dir(directory)
+        if not cls.is_dir(directory):
+            raise NotADirectoryError(f"Not a directory: {directory}")
+
+        descriptor, probe_path = tempfile.mkstemp(
+            prefix=".dirsearch-write-test-",
+            dir=directory,
+        )
+        os.close(descriptor)
+        cls.remove(probe_path)
+
+    @classmethod
+    def open_binary_append(cls, file_name: str) -> int:
+        """Open a binary file descriptor for append without following links."""
+        if cls.is_link(file_name):
+            raise OSError(f"Refusing symbolic link: {file_name}")
+
+        flags = os.O_RDWR | os.O_CREAT | os.O_APPEND | getattr(os, "O_BINARY", 0)
+        flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+        return os.open(file_name, flags, 0o600)
+
+    @staticmethod
+    def open_exclusive(file_name: str) -> int:
+        """Create a private binary file without replacing or following a path."""
+        if os.name == "nt":
+            return FileUtils._open_exclusive_windows(file_name)
+
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+        flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+        return os.open(file_name, flags, 0o600)
+
+    @staticmethod
+    def _open_exclusive_windows(file_name: str) -> int:
+        """Create a Windows file without following an existing reparse point."""
+        import ctypes
+        import msvcrt
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        create_file = kernel32.CreateFileW
+        create_file.argtypes = (
+            wintypes.LPCWSTR,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            wintypes.LPVOID,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            wintypes.HANDLE,
+        )
+        create_file.restype = wintypes.HANDLE
+        close_handle = kernel32.CloseHandle
+        close_handle.argtypes = (wintypes.HANDLE,)
+        close_handle.restype = wintypes.BOOL
+
+        generic_write = 0x40000000
+        create_new = 1
+        file_attribute_normal = 0x00000080
+        file_flag_open_reparse_point = 0x00200000
+        invalid_handle = ctypes.c_void_p(-1).value
+        original_path = FileUtils.get_abs_path(file_name)
+        absolute_path = original_path
+        if not absolute_path.startswith("\\\\?\\"):
+            if absolute_path.startswith("\\\\"):
+                absolute_path = "\\\\?\\UNC\\" + absolute_path[2:]
+            else:
+                absolute_path = "\\\\?\\" + absolute_path
+
+        handle = create_file(
+            absolute_path,
+            generic_write,
+            0,
+            None,
+            create_new,
+            file_attribute_normal | file_flag_open_reparse_point,
+            None,
+        )
+        if handle == invalid_handle:
+            error_code = ctypes.get_last_error()
+            if error_code in (80, 183):
+                raise FileExistsError(
+                    error_code,
+                    "File already exists",
+                    original_path,
+                )
+            raise OSError(error_code, ctypes.FormatError(error_code), original_path)
+
+        try:
+            return msvcrt.open_osfhandle(handle, os.O_WRONLY | os.O_BINARY)
+        except Exception:
+            close_handle(handle)
+            raise
+
+    @staticmethod
+    def remove(file_name: str) -> None:
+        os.unlink(file_name)
 
     @staticmethod
     def write_lines(file_name, lines, overwrite=False):

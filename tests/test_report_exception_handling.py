@@ -2,6 +2,7 @@ import sqlite3
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase
+from unittest.mock import Mock, patch
 
 from lib.core.exceptions import FileExistsException, InvalidRawRequest
 from lib.parse.rawrequest import parse_raw
@@ -37,6 +38,20 @@ class TestReportExceptionHandling(TestCase):
                 SQLiteReport().connect(str(database))
 
         self.assertIsInstance(context.exception.__cause__, sqlite3.DatabaseError)
+
+    def test_sqlite_report_closes_connection_after_validation_failure(self):
+        connection = Mock()
+        connection.cursor.return_value.execute.side_effect = sqlite3.DatabaseError
+
+        with TemporaryDirectory() as directory:
+            database = str(Path(directory, "report.sqlite"))
+            with patch(
+                "lib.report.sqlite_report.sqlite3.connect", return_value=connection
+            ):
+                with self.assertRaisesRegex(ValueError, "valid SQLite database"):
+                    SQLiteReport().connect(database)
+
+        connection.close.assert_called_once_with()
 
     def test_raw_request_malformed_input_preserves_invalid_request_type(self):
         with TemporaryDirectory() as directory:
