@@ -7,6 +7,7 @@ import os
 import queue
 import tempfile
 import threading
+from dataclasses import replace
 from unittest import IsolatedAsyncioTestCase, TestCase, skipUnless
 from unittest.mock import patch
 
@@ -17,14 +18,45 @@ from lib.report.directory_response_store import (
     response_filename,
 )
 from lib.report.jsonl_response_store import (
+    JSONL_BASE64_CHUNK_SIZE,
     JSONL_RESPONSE_SCHEMA,
     JsonlResponseStore,
 )
 from lib.report.response_store import (
+    BaseResponseStore,
     ResponseArtifact,
-    ResponseStore,
     create_response_stores,
 )
+
+
+CHINESE_TEXT = "简体中文，繁體中文：你好世界"
+ARABIC_TEXT = "العربية: مرحبا بالعالم"
+INDIC_TEXT = (
+    "हिन्दी: नमस्ते दुनिया | "
+    "বাংলা: নমস্কার পৃথিবী | "
+    "தமிழ்: வணக்கம் உலகம்"
+)
+MULTISCRIPT_TEXT = f"{CHINESE_TEXT} | {ARABIC_TEXT} | {INDIC_TEXT}"
+
+
+BODY_ENCODING_CASES = (
+    ("empty", b""),
+    ("all-octets", bytes(range(256))),
+    ("utf-8-multiscript", MULTISCRIPT_TEXT.encode("utf-8")),
+    ("chinese-gb18030", CHINESE_TEXT.encode("gb18030")),
+    ("arabic-windows-1256", ARABIC_TEXT.encode("cp1256")),
+    ("indic-utf-16-bom", INDIC_TEXT.encode("utf-16")),
+    ("utf-16-bom", "雪と😀".encode("utf-16")),
+    ("utf-32-be", "雪と😀".encode("utf-32-be")),
+    ("shift-jis", "日本語".encode("shift_jis")),
+    ("invalid-utf8", b"\x00\x80\xbf\xc0\xc1\xf5\xff"),
+    ("utf8-surrogatepass", "\udcff".encode("utf-8", errors="surrogatepass")),
+)
+
+
+def patterned_body(size: int) -> bytes:
+    pattern = bytes(range(256))
+    return (pattern * ((size + len(pattern) - 1) // len(pattern)))[:size]
 
 
 def make_response(
@@ -67,6 +99,32 @@ class TestResponseArtifact(TestCase):
         self.assertEqual(dict(artifact.headers)["x-response-id"], "test-response")
 
 
+class TestBaseResponseStore(TestCase):
+    def test_concrete_stores_share_the_base_contract(self):
+        with tempfile.TemporaryDirectory() as directory:
+            stores = (
+                DirectoryResponseStore(os.path.join(directory, "responses")),
+                JsonlResponseStore(os.path.join(directory, "responses.jsonl")),
+            )
+            try:
+                self.assertTrue(
+                    all(isinstance(store, BaseResponseStore) for store in stores)
+                )
+            finally:
+                for store in stores:
+                    store.close()
+
+    def test_base_lifecycle_prevents_writes_after_close(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = DirectoryResponseStore(directory)
+
+            store.close()
+
+            self.assertTrue(store.closed)
+            with self.assertRaisesRegex(OSError, "closed"):
+                store.save(make_artifact())
+
+
 class TestResponseFilename(TestCase):
     def test_filename_is_portable_and_bounded(self):
         filename = response_filename(
@@ -98,6 +156,21 @@ class TestResponseFilename(TestCase):
 
 
 class TestDirectoryResponseStore(TestCase):
+    def test_preserves_unusual_body_encodings_as_exact_bytes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = DirectoryResponseStore(directory)
+
+            for name, body in BODY_ENCODING_CASES:
+                with self.subTest(name=name):
+                    saved_path = store.save(
+                        make_artifact(
+                            url=f"https://example.com/encoding/{name}",
+                            body=body,
+                        )
+                    )
+                    with open(saved_path, "rb") as file_handle:
+                        self.assertEqual(file_handle.read(), body)
+
     def test_saves_exact_bytes_and_never_overwrites(self):
         with tempfile.TemporaryDirectory() as directory:
             store = DirectoryResponseStore(directory)
@@ -126,7 +199,7 @@ class TestDirectoryResponseStore(TestCase):
     def test_preflight_write_failure_is_reported(self):
         with tempfile.TemporaryDirectory() as directory:
             with patch(
-                "lib.report.directory_response_store.tempfile.mkstemp",
+                "lib.report.directory_response_store.FileUtils.create_writable_dir",
                 side_effect=PermissionError("read-only"),
             ):
                 with self.assertRaisesRegex(PermissionError, "read-only"):
@@ -217,6 +290,93 @@ class TestDirectoryResponseStore(TestCase):
 
 
 class TestJsonlResponseStore(TestCase):
+    def test_round_trips_unusual_body_encodings_as_base64(self):
+        with tempfile.TemporaryDirectory() as directory:
+            file_path = os.path.join(directory, "responses.jsonl")
+            store = JsonlResponseStore(file_path)
+            expected = {}
+            try:
+                for name, body in BODY_ENCODING_CASES:
+                    url = f"https://example.com/encoding/{name}"
+                    expected[url] = body
+                    store.save(make_artifact(url=url, body=body))
+            finally:
+                store.close()
+
+            records = read_jsonl(file_path)
+            self.assertEqual(len(records), len(BODY_ENCODING_CASES))
+            for record in records:
+                with self.subTest(url=record["url"]):
+                    body = base64.b64decode(record["body"], validate=True)
+                    self.assertEqual(body, expected[record["url"]])
+                    self.assertEqual(record["capturedBodyLength"], len(body))
+
+    def test_base64_streaming_preserves_chunk_boundaries(self):
+        sizes = (
+            0,
+            1,
+            2,
+            3,
+            JSONL_BASE64_CHUNK_SIZE - 1,
+            JSONL_BASE64_CHUNK_SIZE,
+            JSONL_BASE64_CHUNK_SIZE + 1,
+            (2 * JSONL_BASE64_CHUNK_SIZE) + 2,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            file_path = os.path.join(directory, "responses.jsonl")
+            store = JsonlResponseStore(file_path)
+            expected = {}
+            try:
+                for size in sizes:
+                    url = f"https://example.com/chunk/{size}"
+                    expected[url] = patterned_body(size)
+                    store.save(make_artifact(url=url, body=expected[url]))
+            finally:
+                store.close()
+
+            records = read_jsonl(file_path)
+            self.assertEqual(len(records), len(sizes))
+            for record in records:
+                with self.subTest(url=record["url"]):
+                    self.assertEqual(
+                        base64.b64decode(record["body"], validate=True),
+                        expected[record["url"]],
+                    )
+
+    def test_escapes_lone_surrogates_in_metadata_without_ascii_only_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            file_path = os.path.join(directory, "responses.jsonl")
+            store = JsonlResponseStore(file_path)
+            artifact = replace(
+                make_artifact(
+                    url="https://example.com/中文/مرحبا/नमस्ते?emoji=😀"
+                ),
+                headers=(
+                    ("content-type", "text/plain; charset=utf-8"),
+                    ("x-chinese", CHINESE_TEXT),
+                    ("x-arabic", ARABIC_TEXT),
+                    ("x-indic", INDIC_TEXT),
+                    ("x-surrogate", "\udcff"),
+                ),
+            )
+
+            store.save(artifact)
+            store.close()
+
+            with open(file_path, "rb") as file_handle:
+                raw_record = file_handle.read()
+            for text in (CHINESE_TEXT, ARABIC_TEXT, INDIC_TEXT):
+                with self.subTest(text=text):
+                    self.assertIn(text.encode("utf-8"), raw_record)
+            self.assertIn(b"\\udcff", raw_record)
+
+            record = read_jsonl(file_path)[0]
+            self.assertEqual(record["url"], artifact.url)
+            self.assertEqual(record["headers"]["x-chinese"], CHINESE_TEXT)
+            self.assertEqual(record["headers"]["x-arabic"], ARABIC_TEXT)
+            self.assertEqual(record["headers"]["x-indic"], INDIC_TEXT)
+            self.assertEqual(record["headers"]["x-surrogate"], "\udcff")
+
     def test_writes_one_versioned_binary_safe_record(self):
         with tempfile.TemporaryDirectory() as directory:
             file_path = os.path.join(directory, "responses.jsonl")
@@ -425,16 +585,17 @@ class TestResponseStoreFactory(TestCase):
 
 class TestControllerResponseStores(TestCase):
     def test_initialization_closes_store_when_setup_fails(self):
-        class RecordingCloseStore(ResponseStore):
+        class RecordingCloseStore(BaseResponseStore):
             def __init__(self):
                 super().__init__("memory")
-                self.closed = False
+                self.close_called = False
 
             def save(self, artifact):
                 return self.destination
 
             def close(self):
-                self.closed = True
+                self.close_called = True
+                super().close()
 
         store = RecordingCloseStore()
 
@@ -447,16 +608,16 @@ class TestControllerResponseStores(TestCase):
                 with self.assertRaisesRegex(RuntimeError, "setup failed"):
                     Controller()
 
-        self.assertTrue(store.closed)
+        self.assertTrue(store.close_called)
 
     def test_failure_in_one_store_does_not_skip_the_next_store(self):
-        class FailingStore(ResponseStore):
+        class FailingStore(BaseResponseStore):
             name = "failing"
 
             def save(self, artifact):
                 raise OSError("disk full")
 
-        class RecordingStore(ResponseStore):
+        class RecordingStore(BaseResponseStore):
             name = "recording"
 
             def __init__(self):
@@ -481,7 +642,7 @@ class TestControllerResponseStores(TestCase):
         self.assertEqual(len(recording.artifacts), 1)
 
     def test_close_failure_does_not_skip_remaining_stores(self):
-        class FailingCloseStore(ResponseStore):
+        class FailingCloseStore(BaseResponseStore):
             name = "failing"
 
             def save(self, artifact):
@@ -490,16 +651,17 @@ class TestControllerResponseStores(TestCase):
             def close(self):
                 raise OSError("close failed")
 
-        class RecordingCloseStore(ResponseStore):
+        class RecordingCloseStore(BaseResponseStore):
             def __init__(self):
                 super().__init__("memory")
-                self.closed = False
+                self.close_called = False
 
             def save(self, artifact):
                 return self.destination
 
             def close(self):
-                self.closed = True
+                self.close_called = True
+                super().close()
 
         recording = RecordingCloseStore()
         controller = object.__new__(Controller)
@@ -511,7 +673,7 @@ class TestControllerResponseStores(TestCase):
             controller._close_response_stores()
 
         report_error.assert_called_once()
-        self.assertTrue(recording.closed)
+        self.assertTrue(recording.close_called)
 
 
 class TestAsyncResponseStores(IsolatedAsyncioTestCase):
@@ -519,7 +681,7 @@ class TestAsyncResponseStores(IsolatedAsyncioTestCase):
         started = threading.Event()
         release = threading.Event()
 
-        class BlockingStore(ResponseStore):
+        class BlockingStore(BaseResponseStore):
             def save(self, artifact):
                 started.set()
                 if not release.wait(timeout=5):
@@ -535,3 +697,70 @@ class TestAsyncResponseStores(IsolatedAsyncioTestCase):
         self.assertFalse(task.done())
         release.set()
         await asyncio.wait_for(task, timeout=2)
+
+    async def test_controller_runs_async_stores_concurrently_and_awaits_all(self):
+        release = asyncio.Event()
+
+        class AsyncStore(BaseResponseStore):
+            def __init__(self, destination):
+                super().__init__(destination)
+                self.started = asyncio.Event()
+                self.finished = False
+
+            def save(self, artifact):
+                raise AssertionError("async store used the synchronous method")
+
+            async def save_async(self, artifact):
+                self.started.set()
+                await release.wait()
+                self.finished = True
+                return self.destination
+
+        stores = (AsyncStore("first"), AsyncStore("second"))
+        controller = object.__new__(Controller)
+        controller.response_stores = stores
+        task = asyncio.create_task(controller.save_response_async(make_response()))
+
+        await asyncio.wait_for(
+            asyncio.gather(*(store.started.wait() for store in stores)),
+            timeout=2,
+        )
+        self.assertFalse(task.done())
+        release.set()
+        await asyncio.wait_for(task, timeout=2)
+
+        self.assertTrue(all(store.finished for store in stores))
+
+    async def test_async_store_failure_does_not_cancel_another_store(self):
+        class FailingStore(BaseResponseStore):
+            name = "failing"
+
+            def save(self, artifact):
+                raise AssertionError("async store used the synchronous method")
+
+            async def save_async(self, artifact):
+                raise OSError("disk full")
+
+        class RecordingStore(BaseResponseStore):
+            def __init__(self):
+                super().__init__("recording")
+                self.saved = False
+
+            def save(self, artifact):
+                raise AssertionError("async store used the synchronous method")
+
+            async def save_async(self, artifact):
+                self.saved = True
+                return self.destination
+
+        recording = RecordingStore()
+        controller = object.__new__(Controller)
+        controller.response_stores = (FailingStore("failure"), recording)
+
+        with patch("lib.controller.controller.logger.exception"), patch(
+            "lib.controller.controller.interface.error"
+        ) as report_error:
+            await controller.save_response_async(make_response())
+
+        report_error.assert_called_once()
+        self.assertTrue(recording.saved)

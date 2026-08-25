@@ -16,10 +16,15 @@
 #
 #  Author: Mauro Soria
 
+import base64
+import gzip
 import http.server
+import json
+import os
 import re
 import ssl
 import socketserver
+import tempfile
 import threading
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase, TestCase
@@ -40,6 +45,8 @@ from lib.connection.requester import (
 )
 from lib.core.data import options
 from lib.core.exceptions import RequestException
+from lib.report.jsonl_response_store import JsonlResponseStore
+from lib.report.response_store import ResponseArtifact
 
 
 REQUEST_TARGET_CASES = (
@@ -60,6 +67,38 @@ REQUEST_TARGET_CASES = (
     ("cjk", "admin/测试", b"/admin/%E6%B5%8B%E8%AF%95"),
 )
 
+CHINESE_TEXT = "简体中文，繁體中文：你好世界"
+ARABIC_TEXT = "العربية: مرحبا بالعالم"
+INDIC_TEXT = (
+    "हिन्दी: नमस्ते दुनिया | "
+    "বাংলা: নমস্কার পৃথিবী | "
+    "தமிழ்: வணக்கம் உலகம்"
+)
+MULTISCRIPT_TEXT = f"{CHINESE_TEXT} | {ARABIC_TEXT} | {INDIC_TEXT}"
+ENCODED_RESPONSE_CASES = (
+    ("encoded/multiscript-utf8%1", "utf-8", MULTISCRIPT_TEXT.encode("utf-8")),
+    (
+        "encoded/chinese-gb18030%1",
+        "gb18030",
+        CHINESE_TEXT.encode("gb18030"),
+    ),
+    (
+        "encoded/arabic-windows-1256%1",
+        "windows-1256",
+        ARABIC_TEXT.encode("cp1256"),
+    ),
+    (
+        "encoded/indic-utf16%1",
+        "utf-16",
+        INDIC_TEXT.encode("utf-16"),
+    ),
+    ("encoded/unknown-binary%1", "x-dirsearch-unknown", bytes(range(256))),
+)
+ENCODED_RESPONSES_BY_TARGET = {
+    f"/{path}".encode(): (charset, body, gzip.compress(body, mtime=0))
+    for path, charset, body in ENCODED_RESPONSE_CASES
+}
+
 
 class RequestTargetTCPServer(socketserver.TCPServer):
     allow_reuse_address = True
@@ -76,6 +115,20 @@ class RequestTargetHandler(http.server.BaseHTTPRequestHandler):
             self.send_response(302)
             self.send_header("location", "/final")
             self.end_headers()
+            return
+
+        encoded_response = ENCODED_RESPONSES_BY_TARGET.get(target)
+        if encoded_response is not None:
+            charset, _, wire_body = encoded_response
+            self.send_response(200)
+            self.send_header(
+                "content-type",
+                f"text/plain; charset={charset}",
+            )
+            self.send_header("content-encoding", "gzip")
+            self.send_header("content-length", str(len(wire_body)))
+            self.end_headers()
+            self.wfile.write(wire_body)
             return
 
         body = b"ok"
@@ -814,3 +867,96 @@ class TestNativeRequesterPathPreservation(BaseRequesterTestCase):
 
             self.assertEqual([error for _, _, error in results], [None])
             self.assertEqual(server.targets, [b"/admin?debug=true"])
+
+
+class TestResponseStoreTransportIntegration(
+    BaseRequesterTestCase, IsolatedAsyncioTestCase
+):
+    def _assert_jsonl_round_trip(self, responses):
+        with tempfile.TemporaryDirectory() as directory:
+            file_path = os.path.join(directory, "responses.jsonl")
+            store = JsonlResponseStore(file_path)
+            try:
+                for response in responses:
+                    store.save(ResponseArtifact.from_response(response))
+            finally:
+                store.close()
+
+            with open(file_path, encoding="utf-8") as file_handle:
+                records = [json.loads(line) for line in file_handle]
+
+        self.assertEqual(len(records), len(ENCODED_RESPONSE_CASES))
+        for record, (_, charset, expected_body) in zip(
+            records, ENCODED_RESPONSE_CASES
+        ):
+            with self.subTest(charset=charset):
+                self.assertEqual(
+                    base64.b64decode(record["body"], validate=True),
+                    expected_body,
+                )
+                self.assertEqual(
+                    record["capturedBodyLength"], len(expected_body)
+                )
+                self.assertEqual(record["headers"]["content-encoding"], "gzip")
+                self.assertEqual(
+                    record["headers"]["content-type"],
+                    f"text/plain; charset={charset}",
+                )
+
+    def _assert_response_bodies(self, responses):
+        self.assertEqual(
+            [response.body for response in responses],
+            [body for _, _, body in ENCODED_RESPONSE_CASES],
+        )
+
+    def test_sync_gzip_multiscript_charsets_round_trip(self):
+        options["save_response_jsonl"] = "responses.jsonl"
+        with RequestTargetServer() as server:
+            requester = Requester()
+            requester.set_url(server.url)
+            try:
+                responses = [
+                    requester.request(path)
+                    for path, _, _ in ENCODED_RESPONSE_CASES
+                ]
+            finally:
+                requester.close()
+
+        self._assert_response_bodies(responses)
+        self._assert_jsonl_round_trip(responses)
+
+    async def test_async_gzip_multiscript_charsets_round_trip(self):
+        options["save_response_jsonl"] = "responses.jsonl"
+        with RequestTargetServer() as server:
+            requester = AsyncRequester()
+            requester.set_url(server.url)
+            try:
+                responses = []
+                for path, _, _ in ENCODED_RESPONSE_CASES:
+                    responses.append(await requester.request(path))
+            finally:
+                await requester.close()
+
+        self._assert_response_bodies(responses)
+        self._assert_jsonl_round_trip(responses)
+
+    def test_native_gzip_multiscript_charsets_round_trip(self):
+        try:
+            backend = NativeHTTPBackend()
+        except RequestException as error:
+            self.skipTest(str(error))
+
+        with RequestTargetServer() as server:
+            results = list(
+                backend.scan(
+                    server.url,
+                    [path for path, _, _ in ENCODED_RESPONSE_CASES],
+                )
+            )
+
+        self.assertEqual(len(results), len(ENCODED_RESPONSE_CASES))
+        self.assertEqual([error for _, _, error in results], [None] * len(results))
+        responses = [response for _, response, _ in results]
+        self.assertTrue(all(response is not None for response in responses))
+        self._assert_response_bodies(responses)
+        self._assert_jsonl_round_trip(responses)

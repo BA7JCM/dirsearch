@@ -68,8 +68,8 @@ from lib.parse.rawrequest import parse_raw
 from lib.parse.url import clean_path, ensure_trailing_path_slash, parse_path
 from lib.report.manager import ReportManager
 from lib.report.response_store import (
+    BaseResponseStore,
     ResponseArtifact,
-    ResponseStore,
     create_response_stores,
 )
 from lib.utils.common import lstrip_once
@@ -649,25 +649,36 @@ class Controller:
             try:
                 store.save(artifact)
             except (OSError, ValueError) as error:
-                self._report_response_store_error(store, response, error)
+                self._report_response_store_error(store, artifact, error)
 
     async def save_response_async(self, response: BaseResponse) -> None:
         artifact = ResponseArtifact.from_response(response)
-        for store in self.response_stores:
-            try:
-                await store.save_async(artifact)
-            except (OSError, ValueError) as error:
-                self._report_response_store_error(store, response, error)
+        await asyncio.gather(
+            *(
+                self._save_response_to_store_async(store, artifact)
+                for store in self.response_stores
+            )
+        )
+
+    async def _save_response_to_store_async(
+        self,
+        store: BaseResponseStore,
+        artifact: ResponseArtifact,
+    ) -> None:
+        try:
+            await store.save_async(artifact)
+        except (OSError, ValueError) as error:
+            self._report_response_store_error(store, artifact, error)
 
     @staticmethod
     def _report_response_store_error(
-        store: ResponseStore,
-        response: BaseResponse,
+        store: BaseResponseStore,
+        artifact: ResponseArtifact,
         error: OSError | ValueError,
     ) -> None:
         logger.exception(error)
         interface.error(
-            f"Couldn't save response for {response.url} to "
+            f"Couldn't save response for {artifact.url} to "
             f"{store.name} store at {store.destination}: {error}"
         )
 

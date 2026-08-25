@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
 from lib.connection.response import BaseResponse
+from lib.utils.file import FileUtils
 
 
 @dataclass(frozen=True)
@@ -41,13 +41,22 @@ class ResponseArtifact:
         )
 
 
-class ResponseStore(ABC):
-    """Persistence boundary for matched response artifacts."""
+class BaseResponseStore(ABC):
+    """Shared lifecycle and async adapter for response artifact stores."""
 
     name = "response"
 
     def __init__(self, destination: str) -> None:
-        self.destination = os.path.abspath(destination)
+        self.destination = FileUtils.get_abs_path(destination)
+        self._closed = False
+
+    @property
+    def closed(self) -> bool:
+        return self._closed
+
+    def ensure_open(self) -> None:
+        if self.closed:
+            raise OSError(f"Response store is closed: {self.destination}")
 
     @abstractmethod
     def save(self, artifact: ResponseArtifact) -> str:
@@ -58,18 +67,24 @@ class ResponseStore(ABC):
         return await asyncio.to_thread(self.save, artifact)
 
     def close(self) -> None:
-        pass
+        self._closed = True
+
+    def __enter__(self) -> BaseResponseStore:
+        return self
+
+    def __exit__(self, *_args) -> None:
+        self.close()
 
 
 def create_response_stores(
     directory: str | None,
     jsonl_file: str | None,
-) -> tuple[ResponseStore, ...]:
+) -> tuple[BaseResponseStore, ...]:
     """Build configured stores while keeping controller orchestration generic."""
-    from lib.report.directory_response_store import DirectoryResponseStore
-    from lib.report.jsonl_response_store import JsonlResponseStore
+    from .directory_response_store import DirectoryResponseStore
+    from .jsonl_response_store import JsonlResponseStore
 
-    stores: list[ResponseStore] = []
+    stores: list[BaseResponseStore] = []
     try:
         if directory:
             stores.append(DirectoryResponseStore(directory))

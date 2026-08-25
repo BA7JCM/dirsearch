@@ -7,7 +7,8 @@ import json
 import os
 import threading
 
-from lib.report.response_store import ResponseArtifact, ResponseStore
+from .response_store import BaseResponseStore, ResponseArtifact
+from lib.utils.file import FileUtils
 
 
 JSONL_RESPONSE_SCHEMA = "dirsearch.response.v1"
@@ -15,24 +16,22 @@ JSONL_RESPONSE_SCHEMA = "dirsearch.response.v1"
 JSONL_BASE64_CHUNK_SIZE = 57 * 1024
 
 
-class JsonlResponseStore(ResponseStore):
+class JsonlResponseStore(BaseResponseStore):
     """Append complete JSONL records under a lock owned by this output file."""
 
     name = "jsonl"
 
     def __init__(self, file_path: str) -> None:
         super().__init__(file_path)
-        parent = os.path.dirname(self.destination)
+        parent = FileUtils.parent(self.destination)
         if parent:
-            os.makedirs(parent, exist_ok=True)
-        if os.path.exists(self.destination) and not os.path.isfile(self.destination):
+            FileUtils.create_dir(parent)
+        if FileUtils.exists(self.destination) and not FileUtils.is_file(
+            self.destination
+        ):
             raise IsADirectoryError(f"Not a file: {self.destination}")
-        if os.path.islink(self.destination):
-            raise OSError(f"Refusing symbolic link: {self.destination}")
 
-        flags = os.O_RDWR | os.O_CREAT | os.O_APPEND | getattr(os, "O_BINARY", 0)
-        flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
-        descriptor = os.open(self.destination, flags, 0o600)
+        descriptor = FileUtils.open_binary_append(self.destination)
         try:
             self._file = os.fdopen(descriptor, "a+b", buffering=0)
         except Exception:
@@ -46,7 +45,6 @@ class JsonlResponseStore(ResponseStore):
             self._file.close()
             raise
         self._lock = threading.Lock()
-        self._closed = False
 
     def _validate_existing_file(self) -> None:
         self._file.seek(0)
@@ -96,11 +94,17 @@ class JsonlResponseStore(ResponseStore):
             separators=(",", ":"),
         )
         # json.dumps() ends this dictionary with "}"; stream the body before it.
-        prefix = metadata_json[:-1].encode("utf-8") + b',"body":"'
+        # HTTP metadata can contain strings that Python represents with lone
+        # surrogates (for example after decoding malformed header bytes).
+        # Preserve those values as JSON Unicode escapes without forcing normal
+        # Unicode metadata to ASCII.
+        prefix = (
+            metadata_json[:-1].encode("utf-8", errors="backslashreplace")
+            + b',"body":"'
+        )
 
         with self._lock:
-            if self._closed:
-                raise OSError(f"Response store is closed: {self.destination}")
+            self.ensure_open()
 
             original_size = os.fstat(self._file.fileno()).st_size
             try:
@@ -132,10 +136,10 @@ class JsonlResponseStore(ResponseStore):
 
     def close(self) -> None:
         with self._lock:
-            if self._closed:
+            if self.closed:
                 return
             try:
                 self._file.flush()
             finally:
                 self._file.close()
-                self._closed = True
+                super().close()
