@@ -23,7 +23,7 @@ from lib.utils.schemedet import detect_scheme
 
 
 class TestSchemedet(TestCase):
-    def run_probe(self, connect_error=None):
+    def run_probe(self, connect_error=None, connect_host=None):
         raw_socket = Mock()
         connection = Mock()
         connection.connect.side_effect = connect_error
@@ -35,7 +35,7 @@ class TestSchemedet(TestCase):
         ) as socket_factory, patch(
             "lib.utils.schemedet.ssl.create_default_context", return_value=context
         ) as context_factory:
-            scheme = detect_scheme("example.test", 443)
+            scheme = detect_scheme("example.test", 443, connect_host=connect_host)
 
         socket_factory.assert_called_once_with()
         raw_socket.settimeout.assert_called_once_with(SOCKET_TIMEOUT)
@@ -43,7 +43,9 @@ class TestSchemedet(TestCase):
         context.wrap_socket.assert_called_once_with(
             raw_socket, server_hostname="example.test"
         )
-        connection.connect.assert_called_once_with(("example.test", 443))
+        connection.connect.assert_called_once_with(
+            ((connect_host or "example.test"), 443)
+        )
         connection.close.assert_called_once_with()
 
         return scheme
@@ -53,3 +55,6 @@ class TestSchemedet(TestCase):
 
     def test_falls_back_to_http_when_tls_connection_fails(self):
         self.assertEqual(self.run_probe(OSError("network unavailable")), "http")
+
+    def test_connects_to_explicit_address_without_changing_tls_hostname(self):
+        self.assertEqual(self.run_probe(connect_host="192.0.2.10"), "https")

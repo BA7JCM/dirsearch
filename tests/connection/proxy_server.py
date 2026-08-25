@@ -34,7 +34,9 @@ class RecordingHTTPServer(socketserver.ThreadingMixIn, HTTPServer):
     def __init__(self, server_address, handler_class):
         super().__init__(server_address, handler_class)
         self._events = []
+        self._host_headers = []
         self._proxy_authorizations = []
+        self._server_names = []
         self._events_lock = threading.Lock()
         self._proxy_behavior = "forward"
         self._required_proxy_authorization = None
@@ -48,10 +50,20 @@ class RecordingHTTPServer(socketserver.ThreadingMixIn, HTTPServer):
         with self._events_lock:
             self._proxy_authorizations.append(authorization)
 
+    def record_host_header(self, host: str | None) -> None:
+        with self._events_lock:
+            self._host_headers.append(host)
+
+    def record_server_name(self, server_name: str | None) -> None:
+        with self._events_lock:
+            self._server_names.append(server_name)
+
     def clear_events(self) -> None:
         with self._events_lock:
             self._events.clear()
+            self._host_headers.clear()
             self._proxy_authorizations.clear()
+            self._server_names.clear()
 
     @property
     def events(self) -> list[tuple[str, str]]:
@@ -62,6 +74,16 @@ class RecordingHTTPServer(socketserver.ThreadingMixIn, HTTPServer):
     def proxy_authorizations(self) -> list[str | None]:
         with self._events_lock:
             return list(self._proxy_authorizations)
+
+    @property
+    def host_headers(self) -> list[str | None]:
+        with self._events_lock:
+            return list(self._host_headers)
+
+    @property
+    def server_names(self) -> list[str | None]:
+        with self._events_lock:
+            return list(self._server_names)
 
     def configure_proxy(
         self,
@@ -102,6 +124,7 @@ class RecordingHTTPServer(socketserver.ThreadingMixIn, HTTPServer):
 class TargetHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.server.record("GET", self.path)
+        self.server.record_host_header(self.headers.get("Host"))
         self.server.record_proxy_authorization(
             self.headers.get("Proxy-Authorization")
         )
@@ -297,6 +320,11 @@ class LocalHTTPServer:
             context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
             context.minimum_version = ssl.TLSVersion.TLSv1_2
             context.load_cert_chain(certificate, private_key)
+            context.set_servername_callback(
+                lambda _socket, server_name, _context: self.server.record_server_name(
+                    server_name
+                )
+            )
             self.server.socket = context.wrap_socket(
                 self.server.socket,
                 server_side=True,
@@ -325,6 +353,14 @@ class LocalHTTPServer:
     @property
     def proxy_authorizations(self) -> list[str | None]:
         return self.server.proxy_authorizations
+
+    @property
+    def host_headers(self) -> list[str | None]:
+        return self.server.host_headers
+
+    @property
+    def server_names(self) -> list[str | None]:
+        return self.server.server_names
 
     def clear_events(self) -> None:
         self.server.clear_events()

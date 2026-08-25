@@ -31,7 +31,6 @@ from typing import Any
 
 from urllib.parse import urlparse
 
-from lib.connection.dns import cache_dns
 from lib.connection.response import BaseResponse
 from lib.core.data import blacklists, options
 from lib.core.decorators import locked
@@ -576,21 +575,29 @@ class Controller:
         elif not 0 < port < 65536:
             raise InvalidURLException(f"Invalid port number: {port}")
 
-        if options["ip"]:
-            cache_dns(parsed.hostname, port, options["ip"])
-
         try:
             # If no scheme is found, detect it by port number
             scheme = (
                 parsed.scheme
                 if parsed.scheme != UNKNOWN
-                else detect_scheme(parsed.hostname, port)
+                else detect_scheme(
+                    parsed.hostname,
+                    port,
+                    connect_host=options["ip"],
+                )
             )
         except ValueError:
             # If the user neither provides the port nor scheme, guess them based
             # on standard website characteristics
-            scheme = detect_scheme(parsed.hostname, 443)
+            scheme = detect_scheme(
+                parsed.hostname,
+                443,
+                connect_host=options["ip"],
+            )
             port = STANDARD_PORTS[scheme]
+
+        if options["ip"]:
+            self.requester.set_ip(parsed.hostname, port, options["ip"])
 
         self.url = f"{scheme}://{parsed.hostname}"
 
