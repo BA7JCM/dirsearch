@@ -67,7 +67,11 @@ from lib.core.settings import (
 from lib.parse.rawrequest import parse_raw
 from lib.parse.url import clean_path, ensure_trailing_path_slash, parse_path
 from lib.report.manager import ReportManager
-from lib.report.response_saver import ResponseSaver
+from lib.report.response_store import (
+    ResponseArtifact,
+    ResponseStore,
+    create_response_stores,
+)
 from lib.utils.common import lstrip_once
 from lib.utils.crawl import Crawler
 from lib.utils.file import FileUtils
@@ -168,19 +172,23 @@ class Controller:
         self._handling_pause = False
         self._force_quit_handler = _create_force_quit_handler()
         self.loop = None  # Will be set if async mode is used
-
-        if options["session_file"]:
-            self._import(options["session_file"])
-            if not hasattr(self, "old_session"):
-                self.old_session = True
-        else:
-            self.setup()
-            self.old_session = False
+        self.response_stores = ()
 
         try:
+            if options["session_file"]:
+                self._import(options["session_file"])
+                if not hasattr(self, "old_session"):
+                    self.old_session = True
+            else:
+                self.setup()
+                self.old_session = False
+
             self.run()
         finally:
-            self._close_requester()
+            try:
+                self._close_requester()
+            finally:
+                self._close_response_stores()
 
     def _close_requester(self) -> None:
         requester = getattr(self, "requester", None)
@@ -239,7 +247,7 @@ class Controller:
             else:
                 last_output = ""
             session_store.apply_to_controller(self, payload)
-            self._prepare_response_saver()
+            self._prepare_response_stores()
             self._confirm_session_overwrite(session_file)
         except (OSError, KeyError, TypeError, UnpicklingError):
             interface.error(
@@ -334,7 +342,7 @@ class Controller:
                 )
                 sys.exit(1)
 
-        self._prepare_response_saver()
+        self._prepare_response_stores()
 
         interface.header(BANNER)
         interface.config(len(self.dictionary))
@@ -372,7 +380,7 @@ class Controller:
         # error_callbacks callback values:
         #  - *args[0]: exception
         match_callbacks = [self.match_callback, self.reporter.save]
-        if self.response_saver:
+        if self.response_stores:
             match_callbacks.append(
                 self.save_response_async
                 if options["request_backend"] != "native" and options["async_mode"]
@@ -621,34 +629,58 @@ class Controller:
     def reset_consecutive_errors(self, response: BaseResponse) -> None:
         self.consecutive_errors = 0
 
-    def _prepare_response_saver(self) -> None:
-        self.response_saver = None
-        if not options["save_response"]:
-            return
-
+    def _prepare_response_stores(self) -> None:
+        self.response_stores = ()
         try:
-            self.response_saver = ResponseSaver(options["save_response"])
-        except OSError as error:
+            self.response_stores = create_response_stores(
+                options["save_response"],
+                options["save_response_jsonl"],
+            )
+        except (OSError, ValueError) as error:
             logger.exception(error)
             interface.error(
-                f'Couldn\'t use response directory at {options["save_response"]}: '
-                f"{error}"
+                f"Couldn't prepare response storage: {error}"
             )
             sys.exit(1)
 
     def save_response(self, response: BaseResponse) -> None:
-        try:
-            self.response_saver.save(response)
-        except OSError as error:
-            logger.exception(error)
-            interface.error(f"Couldn't save response for {response.url}: {error}")
+        artifact = ResponseArtifact.from_response(response)
+        for store in self.response_stores:
+            try:
+                store.save(artifact)
+            except (OSError, ValueError) as error:
+                self._report_response_store_error(store, response, error)
 
     async def save_response_async(self, response: BaseResponse) -> None:
-        try:
-            await asyncio.to_thread(self.response_saver.save, response)
-        except OSError as error:
-            logger.exception(error)
-            interface.error(f"Couldn't save response for {response.url}: {error}")
+        artifact = ResponseArtifact.from_response(response)
+        for store in self.response_stores:
+            try:
+                await store.save_async(artifact)
+            except (OSError, ValueError) as error:
+                self._report_response_store_error(store, response, error)
+
+    @staticmethod
+    def _report_response_store_error(
+        store: ResponseStore,
+        response: BaseResponse,
+        error: OSError | ValueError,
+    ) -> None:
+        logger.exception(error)
+        interface.error(
+            f"Couldn't save response for {response.url} to "
+            f"{store.name} store at {store.destination}: {error}"
+        )
+
+    def _close_response_stores(self) -> None:
+        for store in getattr(self, "response_stores", ()):
+            try:
+                store.close()
+            except OSError as error:
+                logger.exception(error)
+                interface.error(
+                    f"Couldn't close {store.name} response store at "
+                    f"{store.destination}: {error}"
+                )
 
     def match_callback(self, response: BaseResponse) -> None:
         if response.status in options["skip_on_status"]:

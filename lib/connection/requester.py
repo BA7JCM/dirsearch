@@ -510,7 +510,10 @@ class Requester(BaseRequester):
                     response = Response(
                         url,
                         origin_response,
-                        capture_full_body=bool(options["save_response"]),
+                        capture_full_body=bool(
+                            options["save_response"]
+                            or options["save_response_jsonl"]
+                        ),
                     )
                 finally:
                     origin_response.close()
@@ -751,7 +754,10 @@ class AsyncRequester(BaseRequester):
                     response = await AsyncResponse.create(
                         url,
                         xresponse,
-                        capture_full_body=bool(options["save_response"]),
+                        capture_full_body=bool(
+                            options["save_response"]
+                            or options["save_response_jsonl"]
+                        ),
                     )
                 finally:
                     await xresponse.aclose()

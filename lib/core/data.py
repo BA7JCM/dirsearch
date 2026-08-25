@@ -128,6 +128,7 @@ options: dict[str, Any] = {
     "mysql_url": None,
     "postgres_url": None,
     "save_response": None,
+    "save_response_jsonl": None,
     "log_file": None,
     "log_file_size": 0
 }

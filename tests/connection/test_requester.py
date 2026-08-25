@@ -657,7 +657,7 @@ class TestAsyncRequesterResponseCleanup(
     BaseRequesterTestCase, IsolatedAsyncioTestCase
 ):
     async def test_async_save_response_option_captures_full_binary_body(self):
-        options["save_response"] = "responses"
+        options["save_response_jsonl"] = "responses.jsonl"
         requester = AsyncRequester()
         requester.set_url("http://example.com/")
         origin_response = BinaryMultiChunkAsyncResponse()

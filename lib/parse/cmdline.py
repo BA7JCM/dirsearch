@@ -85,6 +85,7 @@ COMMON_HELP_OPTIONS = frozenset(
         "--output-formats",
         "--output-file",
         "--save-response",
+        "--save-response-jsonl",
         "--log",
     }
 )
@@ -918,6 +919,13 @@ def parse_arguments(arguments: list[str] | None = None) -> Values:
         dest="save_response",
         metavar="PATH",
         help="Save matched response bodies into a directory",
+    )
+    output.add_option(
+        "--save-response-jsonl",
+        action="store",
+        dest="save_response_jsonl",
+        metavar="PATH",
+        help="Append matched responses to a JSONL file",
     )
     output.add_option(
         "--log", action="store", dest="log_file", metavar="PATH", help="Log file"

@@ -24,6 +24,7 @@ class TestCommandLineHelp(TestCase):
         self.assertIn("--threads", output)
         self.assertIn("--output-file", output)
         self.assertIn("--save-response", output)
+        self.assertIn("--save-response-jsonl", output)
         self.assertIn("Use '-hh' or '--help-all' to show every option", output)
         self.assertNotIn("--wordlist-backend", output)
         self.assertNotIn("--match-header-regex", output)
