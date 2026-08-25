@@ -4,6 +4,7 @@
 
 - Split CLI help into common (`-h` / `--help`) and complete (`-hh` / `--help-all`) views.
 - Documented the complete template wordlist placeholder reference.
+- Added `--save-response` to save matched response bodies without exposing query values in filenames.
 
 ## [0.5.0] - May 29, 2026
 This release includes all user-facing changes since the last published release,

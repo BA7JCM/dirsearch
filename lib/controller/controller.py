@@ -67,6 +67,7 @@ from lib.core.settings import (
 from lib.parse.rawrequest import parse_raw
 from lib.parse.url import clean_path, ensure_trailing_path_slash, parse_path
 from lib.report.manager import ReportManager
+from lib.report.response_saver import ResponseSaver
 from lib.utils.common import lstrip_once
 from lib.utils.crawl import Crawler
 from lib.utils.file import FileUtils
@@ -238,6 +239,7 @@ class Controller:
             else:
                 last_output = ""
             session_store.apply_to_controller(self, payload)
+            self._prepare_response_saver()
             self._confirm_session_overwrite(session_file)
         except (OSError, KeyError, TypeError, UnpicklingError):
             interface.error(
@@ -332,6 +334,8 @@ class Controller:
                 )
                 sys.exit(1)
 
+        self._prepare_response_saver()
+
         interface.header(BANNER)
         interface.config(len(self.dictionary))
 
@@ -367,9 +371,14 @@ class Controller:
         #
         # error_callbacks callback values:
         #  - *args[0]: exception
-        match_callbacks = (
-            self.match_callback, self.reporter.save, self.reset_consecutive_errors
-        )
+        match_callbacks = [self.match_callback, self.reporter.save]
+        if self.response_saver:
+            match_callbacks.append(
+                self.save_response_async
+                if options["request_backend"] != "native" and options["async_mode"]
+                else self.save_response
+            )
+        match_callbacks.append(self.reset_consecutive_errors)
         not_found_callbacks = (
             self.update_progress_bar, self.reset_consecutive_errors
         )
@@ -387,7 +396,7 @@ class Controller:
             self.fuzzer = Fuzzer(
                 self.requester,
                 self.dictionary,
-                match_callbacks=match_callbacks,
+                match_callbacks=tuple(match_callbacks),
                 not_found_callbacks=not_found_callbacks,
                 error_callbacks=error_callbacks,
             )
@@ -611,6 +620,35 @@ class Controller:
 
     def reset_consecutive_errors(self, response: BaseResponse) -> None:
         self.consecutive_errors = 0
+
+    def _prepare_response_saver(self) -> None:
+        self.response_saver = None
+        if not options["save_response"]:
+            return
+
+        try:
+            self.response_saver = ResponseSaver(options["save_response"])
+        except OSError as error:
+            logger.exception(error)
+            interface.error(
+                f'Couldn\'t use response directory at {options["save_response"]}: '
+                f"{error}"
+            )
+            sys.exit(1)
+
+    def save_response(self, response: BaseResponse) -> None:
+        try:
+            self.response_saver.save(response)
+        except OSError as error:
+            logger.exception(error)
+            interface.error(f"Couldn't save response for {response.url}: {error}")
+
+    async def save_response_async(self, response: BaseResponse) -> None:
+        try:
+            await asyncio.to_thread(self.response_saver.save, response)
+        except OSError as error:
+            logger.exception(error)
+            interface.error(f"Couldn't save response for {response.url}: {error}")
 
     def match_callback(self, response: BaseResponse) -> None:
         if response.status in options["skip_on_status"]:

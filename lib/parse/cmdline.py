@@ -84,6 +84,7 @@ COMMON_HELP_OPTIONS = frozenset(
         "--verbose",
         "--output-formats",
         "--output-file",
+        "--save-response",
         "--log",
     }
 )
@@ -910,6 +911,13 @@ def parse_arguments(arguments: list[str] | None = None) -> Values:
         dest="postgres_url",
         metavar="URL",
         help="Database URL for PostgreSQL output (Format: postgres://[username:password@]host[:port]/database-name)",
+    )
+    output.add_option(
+        "--save-response",
+        action="store",
+        dest="save_response",
+        metavar="PATH",
+        help="Save matched response bodies into a directory",
     )
     output.add_option(
         "--log", action="store", dest="log_file", metavar="PATH", help="Log file"

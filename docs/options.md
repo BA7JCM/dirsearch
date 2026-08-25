@@ -249,6 +249,8 @@ Options:
     --postgres-url=URL  Database URL for PostgreSQL output (Format:
                         postgres://[username:password@]host[:port]/database-
                         name)
+    --save-response=PATH
+                        Save matched response bodies into a directory
     --log=PATH          Log file
 
 See 'config.ini' for the example configuration file

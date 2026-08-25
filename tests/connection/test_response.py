@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 from unittest import IsolatedAsyncioTestCase, TestCase
+from unittest.mock import patch
 
 from lib.connection.response import AsyncResponse, Response
 
@@ -11,12 +12,12 @@ class DummyResponse:
 
     def __init__(self, headers=None, body=b"body", encoding="utf-8"):
         self.headers = headers or {}
-        self._body = body
+        self._chunks = body if isinstance(body, list) else [body]
         self.encoding = encoding
 
     def iter_content(self, chunk_size):
         del chunk_size
-        yield self._body
+        yield from self._chunks
 
 
 class DummyAsyncResponse:
@@ -25,12 +26,13 @@ class DummyAsyncResponse:
 
     def __init__(self, headers=None, body=b"body", encoding="utf-8"):
         self.headers = headers or {}
-        self._body = body
+        self._chunks = body if isinstance(body, list) else [body]
         self.encoding = encoding
 
     async def aiter_bytes(self, chunk_size):
         del chunk_size
-        yield self._body
+        for chunk in self._chunks:
+            yield chunk
 
 
 class TestResponse(TestCase):
@@ -103,6 +105,33 @@ class TestResponse(TestCase):
         self.assertEqual(response.content, "��admin")
         self.assertEqual(response.length, len(response.body))
 
+    def test_full_capture_reads_all_binary_chunks_for_saved_responses(self):
+        chunks = [b"\x00" + b"a" * 15, b"b" * 16]
+        origin = DummyResponse(
+            headers={"content-length": str(sum(map(len, chunks)))},
+            body=chunks,
+        )
+
+        default = Response("http://example.com/binary", origin)
+        captured = Response(
+            "http://example.com/binary",
+            origin,
+            capture_full_body=True,
+        )
+
+        self.assertEqual(default.body, chunks[0])
+        self.assertEqual(captured.body, b"".join(chunks))
+
+    def test_full_capture_never_exceeds_response_limit(self):
+        with patch("lib.connection.response.MAX_RESPONSE_SIZE", 5):
+            response = Response(
+                "http://example.com/binary",
+                DummyResponse(body=[b"abc", b"def"]),
+                capture_full_body=True,
+            )
+
+        self.assertEqual(response.body, b"abcde")
+
 
 class TestAsyncResponse(IsolatedAsyncioTestCase):
     async def test_cjk_length_uses_network_bytes(self):
@@ -149,3 +178,30 @@ class TestAsyncResponse(IsolatedAsyncioTestCase):
         self.assertEqual(response.body, b"\xff\xfeadmin")
         self.assertEqual(response.content, "��admin")
         self.assertEqual(response.length, len(response.body))
+
+    async def test_full_capture_reads_all_binary_chunks_for_saved_responses(self):
+        chunks = [b"\x00" + b"a" * 15, b"b" * 16]
+        origin = DummyAsyncResponse(
+            headers={"content-length": str(sum(map(len, chunks)))},
+            body=chunks,
+        )
+
+        default = await AsyncResponse.create("http://example.com/binary", origin)
+        captured = await AsyncResponse.create(
+            "http://example.com/binary",
+            origin,
+            capture_full_body=True,
+        )
+
+        self.assertEqual(default.body, chunks[0])
+        self.assertEqual(captured.body, b"".join(chunks))
+
+    async def test_full_capture_never_exceeds_response_limit(self):
+        with patch("lib.connection.response.MAX_RESPONSE_SIZE", 5):
+            response = await AsyncResponse.create(
+                "http://example.com/binary",
+                DummyAsyncResponse(body=[b"abc", b"def"]),
+                capture_full_body=True,
+            )
+
+        self.assertEqual(response.body, b"abcde")

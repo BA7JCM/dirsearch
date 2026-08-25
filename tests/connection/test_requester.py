@@ -170,6 +170,18 @@ class MultiChunkSyncResponse(DummySyncResponse):
         yield b"should-not-be-read"
 
 
+class BinaryMultiChunkSyncResponse(DummySyncResponse):
+    headers = {
+        "content-type": "application/octet-stream",
+        "content-length": "8",
+    }
+
+    def iter_content(self, chunk_size):
+        del chunk_size
+        yield b"\x00abc"
+        yield b"defg"
+
+
 class DummySyncSession:
     @staticmethod
     def prepare_request(request):
@@ -213,6 +225,18 @@ class MultiChunkAsyncResponse(DummyAsyncResponse):
         yield b"body"
         self.read_second_chunk = True
         yield b"should-not-be-read"
+
+
+class BinaryMultiChunkAsyncResponse(DummyAsyncResponse):
+    headers = {
+        "content-type": "application/octet-stream",
+        "content-length": "8",
+    }
+
+    async def aiter_bytes(self, chunk_size):
+        del chunk_size
+        yield b"\x00abc"
+        yield b"defg"
 
 
 class DummyAsyncSession:
@@ -419,6 +443,23 @@ class TestRequesterRateLimiting(BaseRequesterTestCase):
 
 
 class TestRequesterResponseCleanup(BaseRequesterTestCase):
+    def test_sync_save_response_option_captures_full_binary_body(self):
+        options["save_response"] = "responses"
+        requester = Requester()
+        requester.set_url("http://example.com/")
+        origin_response = BinaryMultiChunkSyncResponse()
+
+        try:
+            with patch.object(
+                requester.session, "send", return_value=origin_response
+            ):
+                response = requester.request("binary")
+        finally:
+            requester.session.close()
+
+        self.assertEqual(response.body, b"\x00abcdefg")
+        self.assertTrue(origin_response.closed)
+
     def test_sync_response_closes_after_early_bounded_parse(self):
         requester = Requester()
         requester.set_url("http://example.com/")
@@ -615,6 +656,21 @@ class TestAsyncRequesterElapsed(IsolatedAsyncioTestCase):
 class TestAsyncRequesterResponseCleanup(
     BaseRequesterTestCase, IsolatedAsyncioTestCase
 ):
+    async def test_async_save_response_option_captures_full_binary_body(self):
+        options["save_response"] = "responses"
+        requester = AsyncRequester()
+        requester.set_url("http://example.com/")
+        origin_response = BinaryMultiChunkAsyncResponse()
+        requester.session.send = AsyncMock(return_value=origin_response)
+
+        try:
+            response = await requester.request("binary")
+        finally:
+            await requester.session.aclose()
+
+        self.assertEqual(response.body, b"\x00abcdefg")
+        self.assertTrue(origin_response.closed)
+
     async def test_async_response_closes_when_body_parse_fails(self):
         requester = AsyncRequester()
         requester.set_url("http://example.com/")

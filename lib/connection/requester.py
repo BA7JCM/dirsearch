@@ -507,7 +507,11 @@ class Requester(BaseRequester):
                         == PROXY_AUTHENTICATION_REQUIRED
                     ):
                         raise RequestException("Proxy authentication required")
-                    response = Response(url, origin_response)
+                    response = Response(
+                        url,
+                        origin_response,
+                        capture_full_body=bool(options["save_response"]),
+                    )
                 finally:
                     origin_response.close()
                 response.elapsed = time.perf_counter() - start_time
@@ -744,7 +748,11 @@ class AsyncRequester(BaseRequester):
                         == PROXY_AUTHENTICATION_REQUIRED
                     ):
                         raise RequestException("Proxy authentication required")
-                    response = await AsyncResponse.create(url, xresponse)
+                    response = await AsyncResponse.create(
+                        url,
+                        xresponse,
+                        capture_full_body=bool(options["save_response"]),
+                    )
                 finally:
                     await xresponse.aclose()
                 # Measure the whole streamed request lifecycle so sync and async

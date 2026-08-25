@@ -127,6 +127,7 @@ options: dict[str, Any] = {
     "output_formats": None,
     "mysql_url": None,
     "postgres_url": None,
+    "save_response": None,
     "log_file": None,
     "log_file_size": 0
 }
