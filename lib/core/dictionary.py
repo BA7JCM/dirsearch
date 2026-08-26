@@ -136,7 +136,11 @@ class Dictionary:
     def is_valid(self, path: str) -> bool:
         return is_valid_path(path)
 
-    def add_extra(self, path) -> None:
+    def add_extra(self, path: str) -> None:
+        """Queue a valid dynamically discovered path once."""
+        if not self.is_valid(path):
+            return
+
         if path in self._items or path in self._extra:
             return
 

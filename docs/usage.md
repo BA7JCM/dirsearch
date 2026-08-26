@@ -66,7 +66,10 @@ python3 dirsearch.py -u https://target --find-backup
 ```
 
 Dynamic candidates honor `--exclude-extensions`. Media files and paths that
-already look like backups are not expanded again.
+already look like backups are not expanded again. Full filenames receive
+backup and archive suffixes, while extension-stripped basenames receive only
+archive suffixes; for example, `test.php.swp` is valid but `test.swp` is not
+generated.
 
 ## Threads
 

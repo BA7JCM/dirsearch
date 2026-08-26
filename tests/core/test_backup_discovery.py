@@ -5,7 +5,7 @@ from lib.connection.response import NativeResponse
 from lib.controller.controller import Controller
 from lib.core.data import options
 from lib.core.dictionary import Dictionary
-from lib.core.settings import BACKUP_EXTENSIONS
+from lib.core.settings import ARCHIVE_EXTENSIONS, BACKUP_EXTENSIONS
 from lib.core.wordlist_template import generate_backup_paths
 
 
@@ -36,7 +36,12 @@ class TestBackupPathGeneration(TestCase):
         for extension in BACKUP_EXTENSIONS:
             with self.subTest(extension=extension):
                 self.assertIn(f"assets/test.php.{extension}", paths)
+        for extension in ARCHIVE_EXTENSIONS:
+            with self.subTest(archive_extension=extension):
                 self.assertIn(f"assets/test.{extension}", paths)
+        for extension in set(BACKUP_EXTENSIONS) - set(ARCHIVE_EXTENSIONS):
+            with self.subTest(backup_extension=extension):
+                self.assertNotIn(f"assets/test.{extension}", paths)
         self.assertEqual(len(paths), len(set(paths)))
 
     def test_generates_backups_for_configuration_files(self):

@@ -88,14 +88,17 @@ class TestDictionaryTemplates(TestCase):
             [f"backup.{extension}" for extension in BACKUP_EXTENSIONS],
         )
 
-    def test_is_valid_filters_invalid_crawled_paths(self):
+    def test_add_extra_filters_invalid_dynamic_paths(self):
         options["exclude_extensions"] = ("zip",)
         dictionary = Dictionary(files=[])
 
-        self.assertTrue(dictionary.is_valid("admin"))
-        self.assertFalse(dictionary.is_valid(""))
-        self.assertFalse(dictionary.is_valid("#comment"))
-        self.assertFalse(dictionary.is_valid("backup.zip?download=1"))
+        for path in ("", "#comment", "backup.zip?download=1"):
+            dictionary.add_extra(path)
+        dictionary.add_extra("admin")
+
+        self.assertEqual(next(dictionary), "admin")
+        with self.assertRaises(StopIteration):
+            next(dictionary)
 
     def test_generation_limit(self):
         options["wordlist_max_size"] = 1

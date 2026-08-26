@@ -104,7 +104,7 @@ def generate_backup_paths(path: str) -> Iterator[str]:
         basename = filename[:extension_separator]
         basename_path = f"{directory}{separator}{basename}"
         candidates.extend(
-            f"{basename_path}.{extension}" for extension in BACKUP_EXTENSIONS
+            f"{basename_path}.{extension}" for extension in ARCHIVE_EXTENSIONS
         )
 
     yielded = set()
