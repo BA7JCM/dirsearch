@@ -74,6 +74,15 @@ Available categories:
 - `keys`
 - `web`
 - `common`
+- `aggressive` (opt-in payloads likely to trigger WAF rules)
+
+The default `db/dicc.txt` and `common` category omit `aggressive` entries. Select
+that category explicitly when those payloads are appropriate for the target.
+The `all` category selector also includes `aggressive`.
+
+```sh
+python3 dirsearch.py -u https://target --wordlist-categories aggressive
+```
 
 Use `all` to include everything:
 

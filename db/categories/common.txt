@@ -1229,7 +1229,6 @@
 ;json/
 ;login/
 @
-\..\..\..\..\..\..\..\..\..\etc\passwd
 _
 _.htpasswd
 __admin

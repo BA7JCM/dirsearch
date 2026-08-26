@@ -50,6 +50,7 @@ WORDLIST_CATEGORIES = {
     "keys": "keys.txt",
     "web": "web.txt",
     "common": "common.txt",
+    "aggressive": "aggressive.txt",
 
     # PHP
     "php/laravel": "php/laravel.txt",
