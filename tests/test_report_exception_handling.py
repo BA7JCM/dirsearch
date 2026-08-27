@@ -58,6 +58,16 @@ class TestReportExceptionHandling(TestCase):
         self.assertIsInstance(context.exception.__cause__, ValueError)
         self.assertEqual(guarded_file.eof_reads, 1)
 
+    def test_html_report_parser_preserves_generated_resources(self):
+        resources = [{"status": 200, "url": "https://example.com/admin"}]
+        html_report = HTMLReport()
+
+        with TemporaryDirectory() as directory:
+            report = Path(directory, "report.html")
+            report.write_text(html_report.generate(resources))
+
+            self.assertEqual(html_report.parse(str(report)), resources)
+
     def test_sqlite_report_rejects_non_sqlite_file(self):
         with TemporaryDirectory() as directory:
             database = Path(directory, "report.sqlite")
