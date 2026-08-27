@@ -174,3 +174,36 @@ class TestNativeControllerDeadlines(TestCase):
             error_type=SkipTargetInterrupt,
             message="Runtime for target exceeded the maximum set by the user",
         )
+
+    def test_native_scan_does_not_occupy_controller_thread(self):
+        fuzzer = BlockingNativeFuzzer()
+        controller = create_controller(fuzzer)
+        controller_thread_ids = []
+        fuzzer_thread_ids = []
+        errors = []
+        original_start = fuzzer.start
+
+        def record_fuzzer_thread():
+            fuzzer_thread_ids.append(threading.get_ident())
+            original_start()
+
+        def run_controller():
+            controller_thread_ids.append(threading.get_ident())
+            try:
+                controller.start_native_fuzzer(start_time=time.time())
+            except BaseException as error:
+                errors.append(error)
+
+        fuzzer.start = record_fuzzer_thread
+        worker = threading.Thread(target=run_controller)
+        with patch.dict(options, {"max_time": 0, "target_max_time": 0}):
+            worker.start()
+            try:
+                self.assertTrue(fuzzer.started.wait(timeout=1))
+                self.assertNotEqual(fuzzer_thread_ids, controller_thread_ids)
+            finally:
+                fuzzer.quit()
+                worker.join(timeout=1)
+
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(errors, [])
