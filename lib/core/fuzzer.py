@@ -345,6 +345,7 @@ class Fuzzer(BaseFuzzer):
             error_callbacks=error_callbacks,
         )
         self._exc: Exception | None = None
+        self._exc_lock = threading.Lock()
         self._threads = []
         self._play_event = threading.Event()
         self._quit_event = threading.Event()
@@ -405,12 +406,12 @@ class Fuzzer(BaseFuzzer):
             thread.start()
 
     def is_finished(self) -> bool:
-        if self._exc:
-            raise self._exc
-
         for thread in self._threads:
             if thread.is_alive():
                 return False
+
+        if self._exc:
+            raise self._exc
 
         return True
 
@@ -435,6 +436,12 @@ class Fuzzer(BaseFuzzer):
         self._quit_event.set()
         self.play()
 
+    def _stop_with_exception(self, exception: Exception) -> None:
+        with self._exc_lock:
+            if self._exc is None:
+                self._exc = exception
+        self.quit()
+
     def scan(self, path: str) -> None:
         try:
             response = self._requester.request(path)
@@ -458,7 +465,7 @@ class Fuzzer(BaseFuzzer):
                 break
 
             except Exception as e:
-                self._exc = e
+                self._stop_with_exception(e)
 
             finally:
                 time.sleep(options["delay"])
@@ -614,12 +621,20 @@ class AsyncFuzzer(BaseFuzzer):
         await self.setup_scanners()
         self.play()
 
+        tasks = []
         for _ in range(min(options["thread_count"], len(self._dictionary))):
             task = asyncio.create_task(self.task_proc())
+            tasks.append(task)
             self._background_tasks.add(task)
             task.add_done_callback(self._background_tasks.discard)
 
-        await asyncio.gather(*self._background_tasks)
+        try:
+            await asyncio.gather(*tasks)
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     def play(self) -> None:
         self._play_event.set()
@@ -629,7 +644,7 @@ class AsyncFuzzer(BaseFuzzer):
         return True
 
     def quit(self) -> None:
-        for task in self._background_tasks:
+        for task in tuple(self._background_tasks):
             task.cancel()
 
     async def scan(self, path: str) -> None:
