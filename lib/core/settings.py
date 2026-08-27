@@ -50,6 +50,7 @@ WORDLIST_CATEGORIES = {
     "keys": "keys.txt",
     "web": "web.txt",
     "common": "common.txt",
+    "aggressive": "aggressive.txt",
 
     # PHP
     "php/laravel": "php/laravel.txt",
@@ -101,9 +102,23 @@ FILE_BASED_OUTPUT_FORMATS = ("simple", "plain", "json", "xml", "md", "csv", "htm
 
 COMMON_EXTENSIONS = ("php", "jsp", "asp", "aspx", "do", "action", "cgi", "html", "htm", "js", "tar.gz")
 
-MEDIA_EXTENSIONS = ("webm", "mkv", "avi", "ts", "mov", "qt", "amv", "mp4", "m4p", "m4v", "mp3", "swf", "mpg", "mpeg", "jpg", "jpeg", "pjpeg", "png", "woff", "svg", "webp", "bmp", "pdf", "wav", "vtt")
+ARCHIVE_EXTENSIONS = ("zip", "tar", "tar.gz", "tgz", "gz", "7z", "rar", "bak")
 
-EXCLUDE_OVERWRITE_EXTENSIONS = MEDIA_EXTENSIONS + ("axd", "cache", "coffee", "conf", "config", "css", "dll", "lock", "log", "key", "pub", "properties", "ini", "jar", "js", "json", "toml", "txt", "xml", "yaml", "yml")
+BACKUP_EXTENSIONS = ARCHIVE_EXTENSIONS + ("bkp", "bkup", "old", "swn", "swp")
+
+MEDIA_EXTENSIONS = (
+    "webm", "mkv", "avi", "ts", "mov", "qt", "amv", "mp4", "m4p", "m4v",
+    "mp3", "swf", "mpg", "mpeg", "jpg", "jpeg", "pjpeg", "png", "woff",
+    "svg", "webp", "bmp", "pdf", "wav", "vtt",
+)
+
+EXCLUDE_OVERWRITE_EXTENSIONS = MEDIA_EXTENSIONS + (
+    "axd", "cache", "coffee", "conf", "config", "css", "dll", "lock", "log",
+    "key", "pub", "properties", "ini", "jar", "js", "json", "toml", "txt",
+    "xml", "yaml", "yml",
+)
+
+DB_ENGINES = ("mysql", "postgres", "postgresql", "sqlite", "mariadb", "mongodb", "redis")
 
 CRAWL_ATTRIBUTES = ("action", "cite", "data", "formaction", "href", "longdesc", "poster", "src", "srcset", "xmlns")
 

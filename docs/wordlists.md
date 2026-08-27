@@ -74,6 +74,15 @@ Available categories:
 - `keys`
 - `web`
 - `common`
+- `aggressive` (opt-in payloads likely to trigger WAF rules)
+
+The default `db/dicc.txt` and `common` category omit `aggressive` entries. Select
+that category explicitly when those payloads are appropriate for the target.
+The `all` category selector also includes `aggressive`.
+
+```sh
+python3 dirsearch.py -u https://target --wordlist-categories aggressive
+```
 
 Use `all` to include everything:
 
@@ -94,6 +103,7 @@ Template wordlists live in `db/templates/` and support these placeholders:
 - `%SEP%`: separators `-`, `_`, `.`, and `/`.
 - `%DB%` and its compatibility alias `%DB_ENGINE%`: mysql, postgres, postgresql, sqlite, mariadb, mongodb, and redis.
 - `%ARCHIVE%` and its compatibility alias `%ARCHIVE_EXT%`: zip, tar, tar.gz, tgz, gz, 7z, rar, and bak.
+- `%BACKUP%` and its alias `%BACKUP_EXT%`: the archive values plus bkp, bkup, old, swn, and swp.
 - `%API_VERSION%`: v1, v2, v3, v4, latest, and beta.
 - `%YYYY%`, `%YY%`, `%MM%`, and `%DD%`: components of the current date when the wordlist is generated.
 - `%DATE%`: the current date in `YYYY-MM-DD` form.

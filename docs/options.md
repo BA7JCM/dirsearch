@@ -226,6 +226,7 @@ Options:
 
   Advanced Settings:
     --crawl             Crawl for new paths in responses
+    --find-backup       Look for backups of discovered files
 
   View Settings:
     --full-url          Full URLs in the output (enabled automatically in

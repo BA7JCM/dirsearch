@@ -38,6 +38,7 @@ class TestCommandLineHelp(TestCase):
         self.assertIn("--wordlist-backend", short_output)
         self.assertIn("--match-header-regex", short_output)
         self.assertIn("--mysql-url", short_output)
+        self.assertIn("--find-backup", short_output)
 
     def test_help_change_does_not_affect_normal_parsing(self):
         parsed = parse_arguments(

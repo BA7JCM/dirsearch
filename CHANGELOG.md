@@ -1,6 +1,7 @@
 # Changelog
 
 ## [Unreleased]
+- Added opt-in backup discovery for matched files.
 
 - Split CLI help into common (`-h` / `--help`) and complete (`-hh` / `--help-all`) views.
 - Documented the complete template wordlist placeholder reference.

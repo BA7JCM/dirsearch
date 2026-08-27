@@ -84,7 +84,9 @@ class PythonWordlistBackend:
                     # Overwrite unknown extensions with selected ones (but also keep the origin)
                     elif (
                         options["overwrite_extensions"]
-                        and not line.endswith(options["extensions"] + EXCLUDE_OVERWRITE_EXTENSIONS)
+                        and not line.endswith(
+                            options["extensions"] + EXCLUDE_OVERWRITE_EXTENSIONS
+                        )
                         # Paths that have queries in wordlist are usually used for exploiting
                         # disclosed vulnerabilities of services, skip such paths
                         and "?" not in line

@@ -67,6 +67,7 @@ from lib.core.settings import (
     START_TIME,
     UNKNOWN,
 )
+from lib.core.wordlist_template import generate_backup_paths
 from lib.parse.rawrequest import parse_raw
 from lib.parse.url import clean_path, ensure_trailing_path_slash, parse_path
 from lib.report.manager import ReportManager
@@ -807,10 +808,13 @@ class Controller:
 
         if options["crawl"]:
             for path in Crawler.crawl(response):
-                if not self.dictionary.is_valid(path):
-                    continue
                 path = lstrip_once(path, self.base_path)
                 self.dictionary.add_extra(path)
+
+        if options["find_backup"]:
+            path = lstrip_once(response.path, self.base_path)
+            for backup_path in generate_backup_paths(path):
+                self.dictionary.add_extra(backup_path)
 
     def update_progress_bar(self, response: BaseResponse) -> None:
         jobs_count = (

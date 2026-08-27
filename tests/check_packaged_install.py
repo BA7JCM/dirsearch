@@ -70,6 +70,7 @@ def main() -> None:
 
     package_root = Path(settings.__file__).resolve().parents[2]
     assert (package_root / "config.ini").is_file()
+    assert (package_root / "db" / "categories" / "aggressive.txt").is_file()
     assert (package_root / "db" / "categories" / "common.txt").is_file()
     assert (package_root / "db" / "templates" / "crud.txt").is_file()
     subprocess.run(

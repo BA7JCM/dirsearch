@@ -54,6 +54,23 @@ Exclude sub-directories from recursive scans:
 python3 dirsearch.py -e php,html,js -u https://target -r --exclude-subdirs image/,media/,css/
 ```
 
+## Backup Discovery
+
+Use `--find-backup` to queue backup candidates only after dirsearch matches a
+file. For example, matching `test.php` adds candidates including `test.php~`,
+`test.php.bak`, and `test.bak` without applying those suffixes to the entire
+wordlist:
+
+```sh
+python3 dirsearch.py -u https://target --find-backup
+```
+
+Dynamic candidates honor `--exclude-extensions`. Media files and paths that
+already look like backups are not expanded again. Full filenames receive
+backup and archive suffixes, while extension-stripped basenames receive only
+archive suffixes; for example, `test.php.swp` is valid but `test.swp` is not
+generated.
+
 ## Threads
 
 The thread count (`-t` or `--threads`) controls the number of separated brute-force processes. The default is 25.
@@ -192,7 +209,7 @@ python3 dirsearch.py -u https://target --headers-file rate-limit-bypasses.txt
 ## Tips
 
 - If the server has request limits, use proxy randomization with `--proxies-file`.
-- To find config files or backups, try `--suffixes ~` and `--prefixes .`.
+- To find backups only after matching a file, use `--find-backup`.
 - To focus on folder-like candidates, combine directory-focused wordlists with suffixes such as `--suffixes /`.
 - The mix of `--cidr`, `-F`, and `-q` can reduce noise and false negatives when brute-forcing a CIDR.
 - To avoid a flood of `429` results while scanning a URL list, use `--skip-on-status 429`.

@@ -2,6 +2,7 @@ import io
 import os
 import tempfile
 from contextlib import redirect_stdout
+from pathlib import Path
 from unittest import TestCase
 from unittest.mock import patch
 
@@ -9,6 +10,70 @@ from lib.core.options import parse_options
 
 
 class TestOptions(TestCase):
+    def test_aggressive_wordlist_category_is_opt_in(self):
+        args = [
+            "dirsearch.py",
+            "--wordlist-status",
+            "-e",
+            "php",
+            "--wordlist-categories",
+            "aggressive",
+        ]
+
+        with patch("sys.argv", args):
+            parsed = parse_options()
+
+        project_root = Path(__file__).parents[2]
+        aggressive = project_root / "db" / "categories" / "aggressive.txt"
+        traversal = r"\..\..\..\..\..\..\..\..\..\etc\passwd"
+        self.assertEqual(parsed["wordlists"], [str(aggressive)])
+        self.assertIn(
+            traversal,
+            aggressive.read_text(encoding="utf-8").splitlines(),
+        )
+        for default_wordlist in (
+            project_root / "db" / "dicc.txt",
+            project_root / "db" / "categories" / "common.txt",
+        ):
+            with self.subTest(default_wordlist=default_wordlist):
+                self.assertNotIn(
+                    traversal,
+                    default_wordlist.read_text(encoding="utf-8").splitlines(),
+                )
+
+    def test_find_backup_cli_option_is_enabled(self):
+        args = [
+            "dirsearch.py",
+            "--wordlist-status",
+            "-e",
+            "php",
+            "--find-backup",
+        ]
+
+        with patch("sys.argv", args):
+            parsed = parse_options()
+
+        self.assertTrue(parsed["find_backup"])
+
+    def test_find_backup_is_loaded_from_config(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = os.path.join(directory, "config.ini")
+            with open(config_path, "w", encoding="utf-8") as config:
+                config.write("[advanced]\nfind-backup = True\n")
+            args = [
+                "dirsearch.py",
+                "--wordlist-status",
+                "-e",
+                "php",
+                "--config",
+                config_path,
+            ]
+
+            with patch("sys.argv", args):
+                parsed = parse_options()
+
+        self.assertTrue(parsed["find_backup"])
+
     def test_save_response_cli_path_is_absolute(self):
         args = [
             "dirsearch.py",
