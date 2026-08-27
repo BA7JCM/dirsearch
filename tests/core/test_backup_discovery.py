@@ -11,11 +11,7 @@ from lib.core.wordlist_template import generate_backup_paths
 
 def make_dictionary() -> Dictionary:
     dictionary = object.__new__(Dictionary)
-    dictionary._items = []
-    dictionary._index = 0
-    dictionary._extra = []
-    dictionary._extra_index = 0
-    dictionary._claimed = []
+    dictionary.__setstate__(([], 0, [], 0))
     return dictionary
 
 

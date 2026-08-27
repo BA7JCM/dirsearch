@@ -58,6 +58,39 @@ class CoordinatedExtras(list):
         return result
 
 
+class BlockingSnapshotExtras(list):
+    def __init__(
+        self,
+        items: list[str],
+        entered: threading.Event,
+        release: threading.Event,
+    ) -> None:
+        super().__init__(items)
+        self._entered = entered
+        self._release = release
+        self._blocked = False
+
+    def __getitem__(self, item):
+        result = super().__getitem__(item)
+        if isinstance(item, slice) and not self._blocked:
+            self._blocked = True
+            self._entered.set()
+            if not self._release.wait(timeout=TEST_TIMEOUT):
+                raise TimeoutError("test did not release dictionary snapshot")
+        return result
+
+
+def remaining_paths(state: tuple[list[str], int, list[str], int]) -> list[str]:
+    dictionary = object.__new__(Dictionary)
+    dictionary.__setstate__(state)
+    paths = []
+    while True:
+        try:
+            paths.append(next(dictionary))
+        except StopIteration:
+            return paths
+
+
 class TestDictionaryConcurrency(TestCase):
     def test_independent_dictionaries_do_not_share_operation_lock(self):
         first_entered = threading.Event()
@@ -131,3 +164,50 @@ class TestDictionaryConcurrency(TestCase):
 
         self.assertTrue(errors.empty())
         self.assertEqual(dictionary._extra, ["dynamic/admin.bak"])
+
+    def test_session_snapshot_cannot_interleave_with_reset(self):
+        snapshot_entered = threading.Event()
+        release_snapshot = threading.Event()
+        reset_started = threading.Event()
+        reset_finished = threading.Event()
+        snapshot_state = []
+        errors = queue.Queue()
+        dictionary = make_dictionary(["base"])
+        dictionary._extra = BlockingSnapshotExtras(
+            ["dynamic"],
+            snapshot_entered,
+            release_snapshot,
+        )
+        self.assertEqual(next(dictionary), "dynamic")
+
+        def snapshot() -> None:
+            try:
+                snapshot_state.append(dictionary.__getstate__())
+            except Exception as error:
+                errors.put(error)
+
+        def reset() -> None:
+            reset_started.set()
+            try:
+                dictionary.reset()
+            except Exception as error:
+                errors.put(error)
+            finally:
+                reset_finished.set()
+
+        snapshot_thread = threading.Thread(target=snapshot)
+        reset_thread = threading.Thread(target=reset)
+        snapshot_thread.start()
+
+        try:
+            self.assertTrue(snapshot_entered.wait(timeout=TEST_TIMEOUT))
+            reset_thread.start()
+            self.assertTrue(reset_started.wait(timeout=TEST_TIMEOUT))
+            reset_finished.wait(timeout=CONTAINS_TIMEOUT)
+        finally:
+            release_snapshot.set()
+            join_threads(self, [snapshot_thread, reset_thread])
+
+        self.assertTrue(errors.empty())
+        self.assertEqual(len(snapshot_state), 1)
+        self.assertEqual(remaining_paths(snapshot_state[0]), ["base"])
