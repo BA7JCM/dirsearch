@@ -25,6 +25,7 @@ import shutil
 import signal
 import sys
 import re
+import threading
 import time
 from types import SimpleNamespace
 from typing import Any
@@ -477,6 +478,8 @@ class Controller:
                     # https://stackoverflow.com/a/64230941
                     self.pause_future = self.loop.create_future()
                     self.loop.run_until_complete(self.start_coroutines(start_time))
+                elif options["request_backend"] == "native":
+                    self.start_native_fuzzer(start_time)
                 else:
                     self.fuzzer.start()
                     self.process(start_time)
@@ -491,7 +494,9 @@ class Controller:
                 self.jobs_processed += 1
                 self.old_session = False
 
-    async def start_coroutines(self, start_time: float) -> None:
+    def get_time_limit(
+        self, start_time: float
+    ) -> tuple[float | None, Exception | None]:
         now = time.time()
         time_limits = []
 
@@ -517,9 +522,40 @@ class Controller:
                 raise limit_error
 
         if time_limits:
-            timeout, timeout_error = min(time_limits, key=lambda limit: limit[0])
-        else:
-            timeout, timeout_error = None, None
+            return min(time_limits, key=lambda limit: limit[0])
+
+        return None, None
+
+    def start_native_fuzzer(self, start_time: float) -> None:
+        timeout, timeout_error = self.get_time_limit(start_time)
+        if timeout is None:
+            self.fuzzer.start()
+            return
+
+        deadline_reached = threading.Event()
+
+        def stop_at_deadline() -> None:
+            deadline_reached.set()
+            self.fuzzer.quit()
+
+        timer = threading.Timer(timeout, stop_at_deadline)
+        timer.daemon = True
+        timer.start()
+        try:
+            self.fuzzer.start()
+        finally:
+            timer.cancel()
+            timer.join()
+
+        if deadline_reached.is_set():
+            raise timeout_error
+
+        # The scan may finish after the deadline before the timer callback
+        # gets scheduled. Recheck here so a late completion cannot win.
+        self.get_time_limit(start_time)
+
+    async def start_coroutines(self, start_time: float) -> None:
+        timeout, timeout_error = self.get_time_limit(start_time)
 
         task = self.loop.create_task(self.fuzzer.start())
 
