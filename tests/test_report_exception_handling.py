@@ -1,4 +1,5 @@
 import sqlite3
+from io import StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase
@@ -7,7 +8,22 @@ from unittest.mock import Mock, patch
 from lib.core.exceptions import FileExistsException, InvalidRawRequest
 from lib.parse.rawrequest import parse_raw
 from lib.report.csv_report import CSVReport
+from lib.report.html_report import HTMLReport
 from lib.report.sqlite_report import SQLiteReport
+
+
+class EOFGuard(StringIO):
+    def __init__(self, value):
+        super().__init__(value)
+        self.eof_reads = 0
+
+    def readline(self, *args, **kwargs):
+        line = super().readline(*args, **kwargs)
+        if not line:
+            self.eof_reads += 1
+            if self.eof_reads > 1:
+                raise AssertionError("HTML report parser read past EOF")
+        return line
 
 
 class TestReportExceptionHandling(TestCase):
@@ -28,6 +44,19 @@ class TestReportExceptionHandling(TestCase):
                 CSVReport().initiate(str(report))
 
         self.assertIsInstance(context.exception.__cause__, ValueError)
+
+    def test_html_report_validation_stops_at_end_of_malformed_file(self):
+        with TemporaryDirectory() as directory:
+            report = Path(directory, "report.html")
+            report.write_text("<html>not a dirsearch report</html>\n")
+            guarded_file = EOFGuard(report.read_text())
+
+            with patch("lib.report.html_report.open", return_value=guarded_file):
+                with self.assertRaises(FileExistsException) as context:
+                    HTMLReport().initiate(str(report))
+
+        self.assertIsInstance(context.exception.__cause__, ValueError)
+        self.assertEqual(guarded_file.eof_reads, 1)
 
     def test_sqlite_report_rejects_non_sqlite_file(self):
         with TemporaryDirectory() as directory:
