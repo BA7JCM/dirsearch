@@ -1,0 +1,133 @@
+import queue
+import threading
+import time
+from unittest import TestCase
+
+from lib.core.dictionary import Dictionary
+
+
+TEST_TIMEOUT = 2.0
+CONTAINS_TIMEOUT = 0.5
+
+
+def make_dictionary(items=()) -> Dictionary:
+    dictionary = object.__new__(Dictionary)
+    dictionary.__setstate__((list(items), 0, [], 0))
+    return dictionary
+
+
+def join_threads(test_case: TestCase, threads: list[threading.Thread]) -> None:
+    deadline = time.monotonic() + TEST_TIMEOUT
+    for thread in threads:
+        thread.join(timeout=max(0.0, deadline - time.monotonic()))
+    test_case.assertFalse(
+        any(thread.is_alive() for thread in threads),
+        "dictionary concurrency test leaked a worker thread",
+    )
+
+
+class BlockingItems(list):
+    def __init__(
+        self,
+        items: list[str],
+        entered: threading.Event,
+        release: threading.Event,
+    ) -> None:
+        super().__init__(items)
+        self._entered = entered
+        self._release = release
+
+    def __len__(self) -> int:
+        self._entered.set()
+        if not self._release.wait(timeout=TEST_TIMEOUT):
+            raise TimeoutError("test did not release blocked dictionary")
+        return super().__len__()
+
+
+class CoordinatedExtras(list):
+    def __init__(self, workers: int) -> None:
+        super().__init__()
+        self._contains_barrier = threading.Barrier(workers)
+
+    def __contains__(self, item: object) -> bool:
+        result = super().__contains__(item)
+        try:
+            self._contains_barrier.wait(timeout=CONTAINS_TIMEOUT)
+        except threading.BrokenBarrierError:
+            pass
+        return result
+
+
+class TestDictionaryConcurrency(TestCase):
+    def test_independent_dictionaries_do_not_share_operation_lock(self):
+        first_entered = threading.Event()
+        release_first = threading.Event()
+        second_started = threading.Event()
+        second_finished = threading.Event()
+        errors = queue.Queue()
+        first = make_dictionary()
+        first._items = BlockingItems(["first"], first_entered, release_first)
+        second = make_dictionary(["second"])
+
+        def claim(dictionary: Dictionary, started=None, finished=None) -> None:
+            if started is not None:
+                started.set()
+            try:
+                path = dictionary.claim_next()
+                dictionary.release_claim(path)
+            except Exception as error:
+                errors.put(error)
+            finally:
+                if finished is not None:
+                    finished.set()
+
+        first_thread = threading.Thread(target=claim, args=(first,))
+        second_thread = threading.Thread(
+            target=claim,
+            args=(second, second_started, second_finished),
+        )
+        first_thread.start()
+
+        try:
+            self.assertTrue(first_entered.wait(timeout=TEST_TIMEOUT))
+            second_thread.start()
+            self.assertTrue(second_started.wait(timeout=TEST_TIMEOUT))
+            completed_independently = second_finished.wait(timeout=CONTAINS_TIMEOUT)
+        finally:
+            release_first.set()
+            join_threads(self, [first_thread, second_thread])
+
+        self.assertTrue(
+            completed_independently,
+            "an unrelated dictionary was blocked by the process-wide lock",
+        )
+        self.assertTrue(errors.empty())
+
+    def test_concurrent_duplicate_extras_are_enqueued_once(self):
+        worker_count = 8
+        dictionary = make_dictionary()
+        dictionary._extra = CoordinatedExtras(worker_count)
+        start = threading.Barrier(worker_count + 1)
+        errors = queue.Queue()
+
+        def add_candidate() -> None:
+            try:
+                start.wait(timeout=TEST_TIMEOUT)
+                dictionary.add_extra("dynamic/admin.bak")
+            except Exception as error:
+                errors.put(error)
+
+        threads = [threading.Thread(target=add_candidate) for _ in range(worker_count)]
+        for thread in threads:
+            thread.start()
+
+        try:
+            start.wait(timeout=TEST_TIMEOUT)
+        except BaseException:
+            start.abort()
+            raise
+        finally:
+            join_threads(self, threads)
+
+        self.assertTrue(errors.empty())
+        self.assertEqual(dictionary._extra, ["dynamic/admin.bak"])
