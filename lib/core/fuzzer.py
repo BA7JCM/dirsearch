@@ -37,6 +37,7 @@ from lib.core.scanner import AsyncScanner, BaseScanner, Scanner
 from lib.core.settings import (
     DEFAULT_TEST_PREFIXES,
     DEFAULT_TEST_SUFFIXES,
+    NATIVE_PAUSE_TIMEOUT,
     WILDCARD_TEST_POINT_MARKER,
 )
 from lib.parse.url import clean_path
@@ -502,42 +503,80 @@ class NativeFuzzer(Fuzzer):
         )
         self._finished = False
         self._native_backend: NativeHTTPBackend | None = None
+        self._paused_event = threading.Event()
+        self._started_event = threading.Event()
+        self._lifecycle_lock = threading.Lock()
+        self._prepared = False
+
+    def prepare_start(self) -> None:
+        with self._lifecycle_lock:
+            self._quit_event.clear()
+            self._finished = False
+            self._paused_event.clear()
+            self._started_event.clear()
+            self._reset_native_cancellation()
+            self._prepared = True
 
     def start(self) -> None:
-        self._native_backend = self._native_backend or NativeHTTPBackend()
-        self.setup_scanners()
-        self.play()
-        self._quit_event.clear()
-        self._finished = False
+        with self._lifecycle_lock:
+            if not self._prepared:
+                self._quit_event.clear()
+                self._finished = False
+                self._paused_event.clear()
+                self._started_event.clear()
+                self._reset_native_cancellation()
+            self._prepared = False
 
         try:
+            self._native_backend = self._native_backend or NativeHTTPBackend()
+            self.setup_scanners()
+            super().play()
+            self._started_event.set()
+
             while not self._quit_event.is_set():
+                if not self._play_event.is_set():
+                    # Acknowledge pause only after claims are recoverable.
+                    self._dictionary.requeue_claims()
+                    self._paused_event.set()
+                    self._play_event.wait()
+                    self._paused_event.clear()
+                    continue
+
                 paths = self._next_chunk()
                 if not paths:
                     break
 
-                for path, response, error in self._native_backend.scan(
-                    self._requester._url,
-                    paths,
-                    getattr(self._requester, "_query", ""),
-                ):
-                    if self._quit_event.is_set():
-                        break
-                    try:
-                        if error is not None:
-                            for callback in self.error_callbacks:
-                                callback(error)
-                            continue
-                        if response.filtered:
-                            for callback in self.not_found_callbacks:
-                                callback(response)
-                            continue
-                        self.process_response(path, response)
-                    finally:
-                        dictionary_path = lstrip_once(path, self._base_path)
-                        self._dictionary.release_claim(dictionary_path)
+                try:
+                    for path, response, error in self._native_backend.scan(
+                        self._requester._url,
+                        paths,
+                        getattr(self._requester, "_query", ""),
+                    ):
+                        if (
+                            self._quit_event.is_set()
+                            or not self._play_event.is_set()
+                        ):
+                            break
+                        try:
+                            if error is not None:
+                                for callback in self.error_callbacks:
+                                    callback(error)
+                                continue
+                            if response.filtered:
+                                for callback in self.not_found_callbacks:
+                                    callback(response)
+                                continue
+                            self.process_response(path, response)
+                        finally:
+                            dictionary_path = lstrip_once(path, self._base_path)
+                            self._dictionary.release_claim(dictionary_path)
+                finally:
+                    if not self._play_event.is_set():
+                        self._dictionary.requeue_claims()
         finally:
             self._finished = True
+            self._started_event.set()
+            self._paused_event.set()
 
     def _next_chunk(self) -> list[str]:
         chunk_size = max(1000, options["thread_count"] * 100)
@@ -552,8 +591,35 @@ class NativeFuzzer(Fuzzer):
     def is_finished(self) -> bool:
         return self._finished
 
+    def play(self) -> None:
+        self._reset_native_cancellation()
+        self._paused_event.clear()
+        super().play()
+
+    def _reset_native_cancellation(self) -> None:
+        if self._native_backend is None:
+            return
+        reset_cancel = getattr(self._native_backend, "reset_cancel", None)
+        if reset_cancel is not None:
+            reset_cancel()
+
+    def pause(self) -> bool:
+        deadline = time.monotonic() + NATIVE_PAUSE_TIMEOUT
+        if not self._started_event.wait(timeout=NATIVE_PAUSE_TIMEOUT):
+            return self._finished
+
+        self._play_event.clear()
+        if self._finished:
+            return True
+        if self._native_backend is not None:
+            self._native_backend.cancel()
+        timeout = max(0.0, deadline - time.monotonic())
+        return self._paused_event.wait(timeout=timeout)
+
     def quit(self) -> None:
-        super().quit()
+        self._quit_event.set()
+        self._paused_event.clear()
+        super().play()
         if self._native_backend is not None:
             self._native_backend.cancel()
 

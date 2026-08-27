@@ -45,6 +45,19 @@ class SuppressedTimer:
         pass
 
 
+class UncooperativeNativeFuzzer(BlockingNativeFuzzer):
+    def __init__(self):
+        super().__init__()
+        self.release = threading.Event()
+
+    def start(self):
+        self.started.set()
+        self.release.wait(timeout=2)
+
+    def quit(self):
+        self.quit_calls += 1
+
+
 def create_controller(fuzzer):
     controller = object.__new__(Controller)
     controller.start_time = time.time()
@@ -174,3 +187,69 @@ class TestNativeControllerDeadlines(TestCase):
             error_type=SkipTargetInterrupt,
             message="Runtime for target exceeded the maximum set by the user",
         )
+
+    def test_native_scan_does_not_occupy_controller_thread(self):
+        fuzzer = BlockingNativeFuzzer()
+        controller = create_controller(fuzzer)
+        controller_thread_ids = []
+        fuzzer_thread_ids = []
+        errors = []
+        original_start = fuzzer.start
+
+        def record_fuzzer_thread():
+            fuzzer_thread_ids.append(threading.get_ident())
+            original_start()
+
+        def run_controller():
+            controller_thread_ids.append(threading.get_ident())
+            try:
+                controller.start_native_fuzzer(start_time=time.time())
+            except BaseException as error:
+                errors.append(error)
+
+        fuzzer.start = record_fuzzer_thread
+        worker = threading.Thread(target=run_controller)
+        with patch.dict(options, {"max_time": 0, "target_max_time": 0}):
+            worker.start()
+            try:
+                self.assertTrue(fuzzer.started.wait(timeout=1))
+                self.assertNotEqual(fuzzer_thread_ids, controller_thread_ids)
+            finally:
+                fuzzer.quit()
+                worker.join(timeout=1)
+
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(errors, [])
+
+    def test_uncooperative_deadline_preserves_live_dictionary_state(self):
+        fuzzer = UncooperativeNativeFuzzer()
+        controller = create_controller(fuzzer)
+
+        try:
+            with (
+                patch.dict(
+                    options,
+                    {
+                        "async_mode": False,
+                        "request_backend": "native",
+                        "max_time": 0.1,
+                        "target_max_time": 0,
+                    },
+                ),
+                patch(
+                    "lib.controller.controller.NATIVE_WORKER_SHUTDOWN_TIMEOUT",
+                    0.05,
+                ),
+                self.assertRaisesRegex(
+                    QuitInterrupt, "Native scan did not stop safely"
+                ),
+            ):
+                controller.start()
+        finally:
+            fuzzer.release.set()
+            native_worker = getattr(controller, "_native_worker", None)
+            if native_worker is not None:
+                native_worker.join(timeout=1)
+
+        controller.dictionary.reset.assert_not_called()
+        self.assertEqual(controller.directories, [""])

@@ -92,6 +92,15 @@ class Dictionary:
     def release_claim(self, path: str) -> None:
         self._claimed.remove(path)
 
+    @locked
+    def requeue_claims(self) -> None:
+        """Make outstanding claims available again in their original order."""
+        if not self._claimed:
+            return
+
+        self._extra[self._extra_index:self._extra_index] = self._claimed
+        self._claimed.clear()
+
     def __contains__(self, item: str) -> bool:
         return item in self._items
 

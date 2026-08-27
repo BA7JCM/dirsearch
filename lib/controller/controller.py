@@ -58,6 +58,8 @@ from lib.core.settings import (
     DEFAULT_SESSION_FILE,
     EXTENSION_RECOGNITION_REGEX,
     MAX_CONSECUTIVE_REQUEST_ERRORS,
+    NATIVE_WORKER_POLL_INTERVAL,
+    NATIVE_WORKER_SHUTDOWN_TIMEOUT,
     NEW_LINE,
     SIGINT_FORCE_QUIT_THRESHOLD,
     SIGINT_WINDOW_SECONDS,
@@ -488,6 +490,10 @@ class Controller:
                 pass
 
             finally:
+                native_worker = getattr(self, "_native_worker", None)
+                if native_worker is not None and native_worker.is_alive():
+                    raise QuitInterrupt("Native scan did not stop safely")
+
                 self.dictionary.reset()
                 self.directories.pop(0)
 
@@ -528,31 +534,67 @@ class Controller:
 
     def start_native_fuzzer(self, start_time: float) -> None:
         timeout, timeout_error = self.get_time_limit(start_time)
-        if timeout is None:
-            self.fuzzer.start()
-            return
-
         deadline_reached = threading.Event()
+        worker_errors = []
+
+        def run_fuzzer() -> None:
+            try:
+                self.fuzzer.start()
+            except BaseException as error:
+                worker_errors.append(error)
 
         def stop_at_deadline() -> None:
             deadline_reached.set()
             self.fuzzer.quit()
 
-        timer = threading.Timer(timeout, stop_at_deadline)
-        timer.daemon = True
-        timer.start()
+        # Keep the blocking native scan off the signal-handling thread.
+        worker = threading.Thread(target=run_fuzzer, name="dirsearch-native")
+        worker.daemon = True
+        self._native_worker = worker
+        timer = None
+        pending_error = None
         try:
-            self.fuzzer.start()
+            prepare_start = getattr(self.fuzzer, "prepare_start", None)
+            if prepare_start is not None:
+                prepare_start()
+            worker.start()
+
+            if timeout is not None:
+                timer = threading.Timer(timeout, stop_at_deadline)
+                timer.daemon = True
+                timer.start()
+
+            while worker.is_alive() and not deadline_reached.is_set():
+                worker.join(timeout=NATIVE_WORKER_POLL_INTERVAL)
+        except BaseException as error:
+            pending_error = error
+            if worker.is_alive():
+                self.fuzzer.quit()
         finally:
-            timer.cancel()
-            timer.join()
+            if timer is not None:
+                timer.cancel()
+                timer.join()
+
+        if worker.is_alive():
+            worker.join(timeout=NATIVE_WORKER_SHUTDOWN_TIMEOUT)
+        if worker.is_alive():
+            raise QuitInterrupt("Native scan did not stop safely")
+
+        self._native_worker = None
+
+        if pending_error is not None:
+            raise pending_error
+
+        if worker_errors:
+            raise worker_errors[0]
 
         if deadline_reached.is_set():
             raise timeout_error
 
-        # The scan may finish after the deadline before the timer callback
-        # gets scheduled. Recheck here so a late completion cannot win.
-        self.get_time_limit(start_time)
+        if timeout is not None:
+            # The scan may finish after the deadline before the timer callback
+            # gets scheduled. Recheck here so a late completion cannot win.
+            self.get_time_limit(start_time)
 
     async def start_coroutines(self, start_time: float) -> None:
         timeout, timeout_error = self.get_time_limit(start_time)

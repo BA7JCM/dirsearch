@@ -568,6 +568,10 @@ impl NativeHttpEngine {
         self.cancelled.store(true, Ordering::Release);
     }
 
+    fn reset_cancel(&self) {
+        self.cancelled.store(false, Ordering::Release);
+    }
+
     #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (
         base_url,
@@ -655,7 +659,10 @@ impl NativeHttpEngine {
             .map_err(PyRuntimeError::new_err)?,
         );
 
-        self.cancelled.store(false, Ordering::Release);
+        // Pause may race ahead of the worker's first scan call.
+        if self.cancelled.swap(false, Ordering::AcqRel) {
+            return Ok(Vec::new());
+        }
         let cancelled = self.cancelled.clone();
         let clients = self.clients.clone();
         let raw_headers = self.raw_headers.clone();
@@ -665,7 +672,7 @@ impl NativeHttpEngine {
         let use_raw_http = self.use_raw_http;
         let runtime = &self.runtime;
 
-        py.allow_threads(move || {
+        let result = py.allow_threads(move || {
             runtime.block_on(async move {
                 let semaphore = Arc::new(tokio::sync::Semaphore::new(concurrency));
                 let result_count = paths.len();
@@ -756,7 +763,9 @@ impl NativeHttpEngine {
                 results.sort_by_key(|(request_index, _)| *request_index);
                 Ok(results.into_iter().map(|(_, result)| result).collect())
             })
-        })
+        });
+        self.cancelled.store(false, Ordering::Release);
+        result
     }
 }
 
