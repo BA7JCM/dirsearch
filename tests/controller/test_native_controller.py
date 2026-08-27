@@ -45,6 +45,19 @@ class SuppressedTimer:
         pass
 
 
+class UncooperativeNativeFuzzer(BlockingNativeFuzzer):
+    def __init__(self):
+        super().__init__()
+        self.release = threading.Event()
+
+    def start(self):
+        self.started.set()
+        self.release.wait(timeout=2)
+
+    def quit(self):
+        self.quit_calls += 1
+
+
 def create_controller(fuzzer):
     controller = object.__new__(Controller)
     controller.start_time = time.time()
@@ -207,3 +220,36 @@ class TestNativeControllerDeadlines(TestCase):
 
         self.assertFalse(worker.is_alive())
         self.assertEqual(errors, [])
+
+    def test_uncooperative_deadline_preserves_live_dictionary_state(self):
+        fuzzer = UncooperativeNativeFuzzer()
+        controller = create_controller(fuzzer)
+
+        try:
+            with (
+                patch.dict(
+                    options,
+                    {
+                        "async_mode": False,
+                        "request_backend": "native",
+                        "max_time": 0.1,
+                        "target_max_time": 0,
+                    },
+                ),
+                patch(
+                    "lib.controller.controller.NATIVE_WORKER_SHUTDOWN_TIMEOUT",
+                    0.05,
+                ),
+                self.assertRaisesRegex(
+                    QuitInterrupt, "Native scan did not stop safely"
+                ),
+            ):
+                controller.start()
+        finally:
+            fuzzer.release.set()
+            native_worker = getattr(controller, "_native_worker", None)
+            if native_worker is not None:
+                native_worker.join(timeout=1)
+
+        controller.dictionary.reset.assert_not_called()
+        self.assertEqual(controller.directories, [""])

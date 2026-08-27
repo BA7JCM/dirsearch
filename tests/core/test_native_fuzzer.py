@@ -95,6 +95,20 @@ class UncooperativeNativeBackend:
         self.cancelled.set()
 
 
+class CancelAwareNativeBackend:
+    def __init__(self):
+        self.cancelled = threading.Event()
+
+    def scan(self, _base_url, _paths, query=""):
+        if not self.cancelled.wait(timeout=1):
+            raise AssertionError("native scan was not cancelled")
+        if False:
+            yield
+
+    def cancel(self):
+        self.cancelled.set()
+
+
 def make_dictionary(paths):
     dictionary = object.__new__(Dictionary)
     dictionary._items = list(paths)
@@ -333,5 +347,41 @@ class TestNativeFuzzer(TestCase):
             fuzzer.quit()
             worker.join(timeout=1)
 
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(worker_errors, [])
+
+    def test_pause_during_startup_is_not_overwritten_by_fuzzer_initialization(self):
+        dictionary = make_dictionary(["admin"])
+        backend = CancelAwareNativeBackend()
+        setup_started = threading.Event()
+        release_setup = threading.Event()
+        fuzzer = self.make_fuzzer(backend, dictionary, [], [], [])
+
+        def setup_scanners():
+            setup_started.set()
+            if not release_setup.wait(timeout=1):
+                raise AssertionError("native setup was not released")
+
+        fuzzer.setup_scanners = setup_scanners
+        worker_errors = []
+        worker = threading.Thread(target=run_fuzzer, args=(fuzzer, worker_errors))
+        pause_results = []
+        pauser = threading.Thread(target=lambda: pause_results.append(fuzzer.pause()))
+        worker.start()
+
+        try:
+            self.assertTrue(setup_started.wait(timeout=1))
+            pauser.start()
+            release_setup.set()
+            pauser.join(timeout=1)
+
+            self.assertEqual(pause_results, [True])
+            self.assertTrue(worker.is_alive())
+        finally:
+            fuzzer.quit()
+            pauser.join(timeout=1)
+            worker.join(timeout=1)
+
+        self.assertFalse(pauser.is_alive())
         self.assertFalse(worker.is_alive())
         self.assertEqual(worker_errors, [])

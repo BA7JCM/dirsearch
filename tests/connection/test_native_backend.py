@@ -30,6 +30,9 @@ class FakeNativeEngine:
     def cancel(self):
         self.cancelled = True
 
+    def reset_cancel(self):
+        self.cancelled = False
+
 
 class FakeNativeModule:
     def __init__(self):
@@ -137,6 +140,31 @@ class TestNativeHTTPBackend(TestCase):
         self.assertEqual(len(fake_native.engines), 1)
         self.assertEqual(len(fake_native.engines[0].calls), 2)
         self.assertTrue(fake_native.engines[0].cancelled)
+
+    def test_cancellation_before_engine_creation_is_forwarded_to_first_scan(self):
+        fake_native = FakeNativeModule()
+
+        with patch.dict("sys.modules", {"dirsearch_native": fake_native}):
+            backend = NativeHTTPBackend()
+            backend.cancel()
+            list(backend.scan("https://example.com/", ["first"]))
+
+        self.assertEqual(len(fake_native.engines), 1)
+        self.assertTrue(fake_native.engines[0].cancelled)
+        self.assertEqual(len(fake_native.engines[0].calls), 1)
+
+    def test_reset_cancel_discards_cancellation_from_previous_lifecycle(self):
+        fake_native = FakeNativeModule()
+
+        with patch.dict("sys.modules", {"dirsearch_native": fake_native}):
+            backend = NativeHTTPBackend()
+            backend.cancel()
+            backend.reset_cancel()
+            list(backend.scan("https://example.com/", ["first"]))
+
+        self.assertEqual(len(fake_native.engines), 1)
+        self.assertFalse(fake_native.engines[0].cancelled)
+        self.assertEqual(len(fake_native.engines[0].calls), 1)
 
     def test_origin_407_remains_a_response_without_a_proxy(self):
         fake_native = FakeNativeModule()

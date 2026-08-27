@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+
 from collections.abc import Iterable, Iterator
 from typing import Any
 
@@ -28,6 +30,10 @@ class NativeHTTPBackend:
         self._native = dirsearch_native
         self._engine = None
         self._engine_config = None
+        self._cancel_lock = threading.Lock()
+        # Preserve cancellation requested before lazy engine creation.
+        self._cancel_generation = 0
+        self._consumed_cancel_generation = 0
 
     def _get_engine(self):
         config = {
@@ -43,8 +49,16 @@ class NativeHTTPBackend:
         return self._engine
 
     def cancel(self) -> None:
-        if self._engine is not None:
-            self._engine.cancel()
+        with self._cancel_lock:
+            self._cancel_generation += 1
+            if self._engine is not None:
+                self._engine.cancel()
+
+    def reset_cancel(self) -> None:
+        with self._cancel_lock:
+            self._consumed_cancel_generation = self._cancel_generation
+            if self._engine is not None:
+                self._engine.reset_cancel()
 
     def scan(
         self,
@@ -55,13 +69,21 @@ class NativeHTTPBackend:
         raw_paths = list(paths)
         request_paths = [append_query_string(path, query) for path in raw_paths]
         quoted_paths = [safequote(path) for path in request_paths]
-        results = self._get_engine().scan(
+        with self._cancel_lock:
+            engine = self._get_engine()
+            cancel_generation = self._cancel_generation
+            if cancel_generation != self._consumed_cancel_generation:
+                engine.cancel()
+
+        results = engine.scan(
             base_url,
             quoted_paths,
             max_retries=options["max_retries"],
             max_body_size=MAX_RESPONSE_SIZE,
             **self._filter_options(),
         )
+        with self._cancel_lock:
+            self._consumed_cancel_generation = self._cancel_generation
 
         for path, quoted_path, result in zip(raw_paths, quoted_paths, results):
             if result.error is not None:

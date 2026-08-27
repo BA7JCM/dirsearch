@@ -200,6 +200,35 @@ class TestNativeHttpEngine(TestCase):
         self.assertEqual(results, [])
         self.assertLess(elapsed, 2)
 
+    def test_cancellation_before_scan_is_consumed_without_sending_requests(self):
+        server = CountingHTTPServer()
+        engine = dirsearch_native.NativeHttpEngine()
+        engine.cancel()
+
+        try:
+            cancelled = engine.scan(server.url, ["cancelled"])
+            resumed = engine.scan(server.url, ["resumed"])
+        finally:
+            server.close()
+
+        self.assertEqual(cancelled, [])
+        self.assertEqual(resumed[0].status, 200)
+        self.assertEqual(server.connection_count, 1)
+
+    def test_reset_cancel_allows_scan_after_lifecycle_shutdown(self):
+        server = CountingHTTPServer()
+        engine = dirsearch_native.NativeHttpEngine()
+        engine.cancel()
+        engine.reset_cancel()
+
+        try:
+            results = engine.scan(server.url, ["resumed"])
+        finally:
+            server.close()
+
+        self.assertEqual(results[0].status, 200)
+        self.assertEqual(server.connection_count, 1)
+
     def test_explicit_cancellation_closes_raw_fallback_socket(self):
         server = StalledHTTPServer()
         engine = dirsearch_native.NativeHttpEngine(timeout_secs=5)

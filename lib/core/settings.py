@@ -192,6 +192,13 @@ SIGINT_WINDOW_SECONDS = 0.8
 # Number of rapid Ctrl+C presses required to force quit
 SIGINT_FORCE_QUIT_THRESHOLD = 3
 
+# Native scanner lifecycle bounds
+NATIVE_PAUSE_TIMEOUT = 2.0
+
+NATIVE_WORKER_POLL_INTERVAL = 0.05
+
+NATIVE_WORKER_SHUTDOWN_TIMEOUT = 2.0
+
 URL_SAFE_CHARS = string.punctuation
 
 TEXT_CHARS = bytearray({7, 8, 9, 10, 12, 13, 27} | set(range(0x20, 0x100)) - {0x7F})
