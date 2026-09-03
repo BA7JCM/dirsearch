@@ -49,6 +49,17 @@ class TestCrawl(TestCase):
         html_doc = f'Link: {DUMMY_URL}foobar'
         self.assertEqual(Crawler.text_crawl(DUMMY_URL, DUMMY_URL, html_doc), {"foobar"})
 
+    def test_text_crawl_preserves_nested_paths(self):
+        text_doc = (
+            f"Links: {DUMMY_URL}api/v1/users?next=/dashboard "
+            f"{DUMMY_URL}public/scripts/"
+        )
+
+        self.assertEqual(
+            Crawler.text_crawl(DUMMY_URL, DUMMY_URL, text_doc),
+            {"api/v1/users?next=/dashboard", "public/scripts/"},
+        )
+
     def test_html_crawl(self):
         html_doc = f'<a href="{DUMMY_URL}foo">link</a><script src="/bar.js"><img src="/bar.png">'
         self.assertEqual(Crawler.html_crawl(DUMMY_URL, DUMMY_URL, html_doc), {"foo", "bar.js"})
