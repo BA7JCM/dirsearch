@@ -35,9 +35,10 @@ class HTMLReport(FileReportMixin, BaseReport):
 
     def parse(self, file):
         with open(file) as fh:
-            while 1:
+            while True:
                 line = fh.readline()
-                # Gotta be the worst way to parse it but I don't know a better way:P
+                if not line:
+                    raise ValueError("HTML report does not contain resources data")
                 if line.startswith("        resources: "):
                     return json.loads(line[19:-2])
 
