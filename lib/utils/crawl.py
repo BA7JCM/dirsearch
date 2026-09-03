@@ -19,7 +19,6 @@
 import re
 
 from bs4 import BeautifulSoup
-from functools import lru_cache
 
 from lib.core.settings import (
     CRAWL_ATTRIBUTES, CRAWL_TAGS,
@@ -47,7 +46,6 @@ class Crawler:
             return cls.text_crawl(response.url, scope, response.content)
 
     @staticmethod
-    @lru_cache(maxsize=None)
     def text_crawl(url, scope, content):
         results = []
         regex = re.escape(scope) + "[a-zA-Z0-9-._~!$&*+,;=:@?%]+"
@@ -58,7 +56,6 @@ class Crawler:
         return _filter(results)
 
     @staticmethod
-    @lru_cache(maxsize=None)
     def html_crawl(url, scope, content):
         results = []
         soup = BeautifulSoup(content, 'html.parser')
@@ -82,6 +79,5 @@ class Crawler:
         return _filter(results)
 
     @staticmethod
-    @lru_cache(maxsize=None)
     def robots_crawl(url, scope, content):
         return _filter(re.findall(ROBOTS_TXT_REGEX, content))
