@@ -86,3 +86,47 @@ class TestReportLocking(TestCase):
         )
         self.assertTrue(errors.empty())
         self.assertIn("second", second.contents)
+
+    def test_same_report_keeps_operation_lock(self):
+        first_entered = threading.Event()
+        release_first = threading.Event()
+        second_started = threading.Event()
+        second_finished = threading.Event()
+        errors = queue.Queue()
+        report = MemorySimpleReport(first_entered, release_first)
+
+        def save(url, started=None, finished=None):
+            if started is not None:
+                started.set()
+            try:
+                report.save("unused", SimpleNamespace(url=url))
+            except Exception as error:
+                errors.put(error)
+            finally:
+                if finished is not None:
+                    finished.set()
+
+        first_thread = threading.Thread(target=save, args=("first",))
+        second_thread = threading.Thread(
+            target=save,
+            args=("second", second_started, second_finished),
+        )
+        first_thread.start()
+
+        try:
+            self.assertTrue(first_entered.wait(timeout=TEST_TIMEOUT))
+            second_thread.start()
+            self.assertTrue(second_started.wait(timeout=TEST_TIMEOUT))
+            completed_while_first_was_blocked = second_finished.wait(
+                timeout=INDEPENDENT_COMPLETION_TIMEOUT
+            )
+        finally:
+            release_first.set()
+            join_threads(self, [first_thread, second_thread])
+
+        self.assertFalse(
+            completed_while_first_was_blocked,
+            "writes through the same report instance were not serialized",
+        )
+        self.assertTrue(errors.empty())
+        self.assertEqual(report.contents.splitlines(), ["first", "second"])

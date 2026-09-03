@@ -17,6 +17,7 @@
 #  Author: Mauro Soria
 
 import sqlite3
+import threading
 from abc import ABC, abstractmethod
 
 from lib.core.decorators import locked
@@ -49,6 +50,9 @@ SQL_CONNECTION_ERRORS = (
 
 
 class BaseReport(ABC):
+    def __init__(self):
+        self._operation_lock = threading.Lock()
+
     @abstractmethod
     def initiate(self):
         raise NotImplementedError

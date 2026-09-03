@@ -18,6 +18,7 @@
 
 import sys
 import shutil
+import threading
 import unicodedata
 
 from lib.core.data import options
@@ -53,6 +54,7 @@ def safe_display_text(value, max_length=MAX_DISPLAY_TEXT_LENGTH):
 
 class CLI:
     def __init__(self):
+        self._operation_lock = threading.Lock()
         self.last_in_line = False
         self.buffer = ""
 

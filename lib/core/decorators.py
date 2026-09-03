@@ -24,7 +24,6 @@ from functools import wraps
 from time import time
 from typing import Any, Callable, TypeVar, cast
 
-_lock = threading.Lock()
 _cache: dict[int, tuple[float, Any]] = {}
 _cache_lock = threading.Lock()
 
@@ -57,8 +56,9 @@ def cached(timeout: int | float = 100) -> Callable[[F], F]:
 
 
 def locked(func: F) -> F:
-    def with_locking(*args: Any, **kwargs: Any) -> Any:
-        with _lock:
-            return func(*args, **kwargs)
+    @wraps(func)
+    def with_locking(instance: Any, *args: Any, **kwargs: Any) -> Any:
+        with instance._operation_lock:
+            return func(instance, *args, **kwargs)
 
     return cast(F, with_locking)
