@@ -48,7 +48,7 @@ class Crawler:
     @staticmethod
     def text_crawl(url, scope, content):
         results = []
-        regex = re.escape(scope) + "[a-zA-Z0-9-._~!$&*+,;=:@?%]+"
+        regex = re.escape(scope) + "[a-zA-Z0-9-._~!$&*+,;=:@?%/]+"
 
         for match in re.findall(regex, content):
             results.append(match[len(scope):])
