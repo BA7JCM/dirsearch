@@ -16,13 +16,35 @@
 #
 #  Author: Mauro Soria
 
+import gc
+import weakref
 from unittest import TestCase
 
 from lib.core.settings import DUMMY_URL
 from lib.utils.crawl import Crawler
 
 
+class WeakText(str):
+    pass
+
+
 class TestCrawl(TestCase):
+    def assert_body_is_released(self, parser, body):
+        clear_cache = getattr(parser, "cache_clear", None)
+        if clear_cache:
+            clear_cache()
+
+        content = WeakText(body)
+        reference = weakref.ref(content)
+        try:
+            parser(DUMMY_URL, DUMMY_URL, content)
+            del content
+            gc.collect()
+            self.assertIsNone(reference())
+        finally:
+            if clear_cache:
+                clear_cache()
+
     def test_text_crawl(self):
         html_doc = f'Link: {DUMMY_URL}foobar'
         self.assertEqual(Crawler.text_crawl(DUMMY_URL, DUMMY_URL, html_doc), {"foobar"})
@@ -56,3 +78,21 @@ Disallow: /path1
 User-agent: *
         Allow: /path2"""
         self.assertEqual(Crawler.robots_crawl(DUMMY_URL, DUMMY_URL, robots_txt), {"path1", "path2"})
+
+    def test_text_crawl_releases_response_body(self):
+        self.assert_body_is_released(
+            Crawler.text_crawl,
+            f"Link: {DUMMY_URL}text-retention-check",
+        )
+
+    def test_html_crawl_releases_response_body(self):
+        self.assert_body_is_released(
+            Crawler.html_crawl,
+            '<a href="/html-retention-check">link</a>',
+        )
+
+    def test_robots_crawl_releases_response_body(self):
+        self.assert_body_is_released(
+            Crawler.robots_crawl,
+            "Allow: /robots-retention-check",
+        )
