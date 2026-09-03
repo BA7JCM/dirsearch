@@ -173,6 +173,7 @@ def format_session_path(path: str) -> str:
 
 class Controller:
     def __init__(self) -> None:
+        self._operation_lock = threading.Lock()
         self._handling_pause = False
         self._force_quit_handler = _create_force_quit_handler()
         self.loop = None  # Will be set if async mode is used
