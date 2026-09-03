@@ -425,6 +425,7 @@ class Controller:
                     interface.target(self.url)
 
                 self.reporter.prepare(self.url)
+                self.crawl_target()
                 self.start()
 
             except (
@@ -706,6 +707,28 @@ class Controller:
         self.requester.set_url(self.url)
         self.requester.set_query(parsed.query)
 
+    def crawl_target(self) -> None:
+        if not options["crawl"]:
+            return
+
+        try:
+            if options["async_mode"]:
+                response = self.loop.run_until_complete(
+                    self.requester.request(self.base_path)
+                )
+            else:
+                response = self.requester.request(self.base_path)
+        except RequestException as error:
+            self.raise_error(error)
+            self.append_error_log(error)
+            return
+
+        self.add_crawled_paths(response)
+
+    def add_crawled_paths(self, response: BaseResponse) -> None:
+        for path in Crawler.crawl(response):
+            self.dictionary.add_extra(lstrip_once(path, self.base_path))
+
     def reset_consecutive_errors(self, response: BaseResponse) -> None:
         self.consecutive_errors = 0
 
@@ -808,9 +831,7 @@ class Controller:
                 self.requester.request(response.full_path, proxy=options["replay_proxy"])
 
         if options["crawl"]:
-            for path in Crawler.crawl(response):
-                path = lstrip_once(path, self.base_path)
-                self.dictionary.add_extra(path)
+            self.add_crawled_paths(response)
 
         if options["find_backup"]:
             path = lstrip_once(response.path, self.base_path)
