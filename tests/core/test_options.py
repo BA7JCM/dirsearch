@@ -10,6 +10,26 @@ from lib.core.options import parse_options
 
 
 class TestOptions(TestCase):
+    def test_data_file_preserves_request_body_text(self):
+        with tempfile.TemporaryDirectory() as directory:
+            data_path = os.path.join(directory, "request-body.txt")
+            body = "alpha=1&beta=2\r\nline=two\n"
+            with open(data_path, "wb") as data_file:
+                data_file.write(body.encode())
+            args = [
+                "dirsearch.py",
+                "--wordlist-status",
+                "-e",
+                "php",
+                "--data-file",
+                data_path,
+            ]
+
+            with patch("sys.argv", args):
+                parsed = parse_options()
+
+        self.assertEqual(parsed["data"], body)
+
     def test_aggressive_wordlist_category_is_opt_in(self):
         args = [
             "dirsearch.py",
