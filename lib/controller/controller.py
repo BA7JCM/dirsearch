@@ -21,7 +21,6 @@ from __future__ import annotations
 import asyncio
 import gc
 import os
-import shutil
 import signal
 import sys
 import re
@@ -455,10 +454,7 @@ class Controller:
 
         if options["session_file"]:
             try:
-                if os.path.isdir(options["session_file"]):
-                    shutil.rmtree(options["session_file"])
-                else:
-                    os.remove(options["session_file"])
+                SessionStore(options).delete(options["session_file"])
             except OSError:
                 interface.error("Failed to delete old session file, remove it to free some space")
 
