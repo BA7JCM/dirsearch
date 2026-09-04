@@ -29,7 +29,7 @@ import time
 from types import SimpleNamespace
 from typing import Any
 
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 from lib.connection.response import BaseResponse
 from lib.core.data import blacklists, options
@@ -655,9 +655,11 @@ class Controller:
         self.base_path = lstrip_once(parsed.path, "/")
 
         # Credentials in URL
-        if "@" in parsed.netloc:
-            cred, parsed.netloc = parsed.netloc.split("@")
-            self.requester.set_auth("basic", cred)
+        if parsed.username is not None:
+            credential = unquote(parsed.username)
+            if parsed.password is not None:
+                credential += f":{unquote(parsed.password)}"
+            self.requester.set_auth("basic", credential)
 
         if parsed.scheme not in (UNKNOWN, "https", "http"):
             raise InvalidURLException(f"Unsupported URI scheme: {parsed.scheme}")
