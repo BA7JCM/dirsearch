@@ -156,6 +156,21 @@ class SessionStore:
             payload["options"],
         )
 
+    def delete(self, session_path: str) -> None:
+        """Delete session-owned files without removing unrelated entries."""
+        if os.path.islink(session_path) or not os.path.isdir(session_path):
+            os.remove(session_path)
+            return
+
+        for file_name in self.FILES.values():
+            try:
+                os.remove(FileUtils.build_path(session_path, file_name))
+            except FileNotFoundError:
+                pass
+
+        if not os.listdir(session_path):
+            os.rmdir(session_path)
+
     def apply_to_controller(self, controller: Any, payload: dict[str, Any]) -> None:
         controller_state = payload["controller"]
         controller.start_time = controller_state["start_time"]
