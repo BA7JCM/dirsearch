@@ -49,6 +49,102 @@ class TestCrawl(TestCase):
         html_doc = f'Link: {DUMMY_URL}foobar'
         self.assertEqual(Crawler.text_crawl(DUMMY_URL, DUMMY_URL, html_doc), {"foobar"})
 
+    def test_text_crawl_preserves_url_components(self):
+        paths = (
+            "api/v1/users?next=/dashboard",
+            "public/scripts/",
+            "catalog;view=full/items:latest@v2?filter[status]=active",
+            "reports/Ben's_(final)/view?format=csv",
+            "search/%E2%9C%93?q=one%20two&next=/account?tab=keys",
+            "?page=2&next=/dashboard",
+        )
+
+        for path in paths:
+            with self.subTest(path=path):
+                text_doc = f'const endpoint = "{DUMMY_URL}{path}";'
+
+                self.assertEqual(
+                    Crawler.text_crawl(DUMMY_URL, DUMMY_URL, text_doc),
+                    {path},
+                )
+
+    def test_text_crawl_handles_serialized_url_forms(self):
+        cases = (
+            (
+                'JSON escaped solidus',
+                r'const endpoint = "https:\/\/example.com\/api\/v1\/users";',
+                "api/v1/users",
+            ),
+            (
+                'JavaScript Unicode escape',
+                r'const endpoint = "https:\u002F\u002Fexample.com\u002Fgraphql\u002Fv2";',
+                "graphql/v2",
+            ),
+            (
+                'JavaScript hexadecimal escape',
+                r'const endpoint = "https:\x2f\x2fexample.com\x2fassets\x2fapp.js";',
+                "assets/app.js",
+            ),
+            (
+                "case-insensitive origin",
+                'const endpoint = "HTTPS://EXAMPLE.COM/Admin/Users";',
+                "Admin/Users",
+            ),
+        )
+
+        for name, text_doc, expected in cases:
+            with self.subTest(name=name):
+                self.assertEqual(
+                    Crawler.text_crawl(DUMMY_URL, DUMMY_URL, text_doc),
+                    {expected},
+                )
+
+    def test_text_crawl_respects_context_delimiters(self):
+        text_doc = (
+            f'quoted = "{DUMMY_URL}api/search?q=one,two"; '
+            f"fetch('{DUMMY_URL}api/health'); "
+            f"angle = <{DUMMY_URL}docs/start>; "
+            f"See ({DUMMY_URL}docs/(draft)). "
+            f"Then visit {DUMMY_URL}account/profile, and continue."
+        )
+
+        self.assertEqual(
+            Crawler.text_crawl(DUMMY_URL, DUMMY_URL, text_doc),
+            {
+                "account/profile",
+                "api/health",
+                "api/search?q=one,two",
+                "docs/(draft)",
+                "docs/start",
+            },
+        )
+
+    def test_text_crawl_keeps_scope_and_fragment_boundaries(self):
+        text_doc = (
+            f"{DUMMY_URL}api/health#readiness "
+            f"{DUMMY_URL}api/health#liveness "
+            f"{DUMMY_URL}#overview "
+            "http://example.com/wrong-scheme "
+            "https://example.com.evil.test/lookalike "
+            "https://other.example/api/external"
+        )
+
+        self.assertEqual(
+            Crawler.text_crawl(DUMMY_URL, DUMMY_URL, text_doc),
+            {"api/health"},
+        )
+
+    def test_text_crawl_filters_media_paths_not_route_suffixes(self):
+        text_doc = (
+            f'route = "{DUMMY_URL}api/generatepdf"; '
+            f'image = "{DUMMY_URL}assets/LOGO.PNG?v=2#hero";'
+        )
+
+        self.assertEqual(
+            Crawler.text_crawl(DUMMY_URL, DUMMY_URL, text_doc),
+            {"api/generatepdf"},
+        )
+
     def test_html_crawl(self):
         html_doc = f'<a href="{DUMMY_URL}foo">link</a><script src="/bar.js"><img src="/bar.png">'
         self.assertEqual(Crawler.html_crawl(DUMMY_URL, DUMMY_URL, html_doc), {"foo", "bar.js"})
