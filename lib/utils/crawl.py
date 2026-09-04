@@ -17,6 +17,7 @@
 #  Author: Mauro Soria
 
 import re
+import string
 
 from bs4 import BeautifulSoup
 
@@ -29,8 +30,63 @@ from lib.parse.url import clean_path, parse_path
 from lib.utils.common import merge_path
 
 
+_ESCAPED_SLASH_REGEX = re.compile(r"\\(?:/|u002f|x2f)", re.IGNORECASE)
+_MEDIA_SUFFIXES = tuple(f".{extension}" for extension in MEDIA_EXTENSIONS)
+# RFC 3986 URI characters plus brackets used by common array query syntax.
+_TEXT_URL_CHARS = frozenset(
+    string.ascii_letters + string.digits + "-._~%!$&'()*+,;=:@/?#[]"
+)
+_TEXT_URL_QUOTES = frozenset("\"'`")
+
+
 def _filter(paths):
-    return {clean_path(path, keep_queries=True) for path in paths if not path.endswith(MEDIA_EXTENSIONS)}
+    results = set()
+
+    for path in paths:
+        path = clean_path(path, keep_queries=True)
+        resource_path = path.split("?", 1)[0]
+
+        if not path or resource_path.lower().endswith(_MEDIA_SUFFIXES):
+            continue
+
+        results.add(path)
+
+    return results
+
+
+def _trim_unquoted_url(path):
+    path = path.rstrip(".,")
+
+    for opening, closing in (("(", ")"), ("[", "]")):
+        excess = max(0, path.count(closing) - path.count(opening))
+        trailing = len(path) - len(path.rstrip(closing))
+        trim_count = min(excess, trailing)
+        if trim_count:
+            path = path[:-trim_count]
+
+    return path
+
+
+def _extract_scoped_paths(scope, content):
+    content = _ESCAPED_SLASH_REGEX.sub("/", content)
+    scope_regex = re.compile(re.escape(scope), re.IGNORECASE)
+
+    for match in scope_regex.finditer(content):
+        preceding = content[match.start() - 1] if match.start() else ""
+        quote = preceding if preceding in _TEXT_URL_QUOTES else None
+        path = []
+
+        for char in content[match.end():]:
+            if char == quote or char not in _TEXT_URL_CHARS:
+                break
+            path.append(char)
+
+        path = "".join(path)
+        if quote is None:
+            path = _trim_unquoted_url(path)
+
+        if path:
+            yield path
 
 
 class Crawler:
@@ -47,13 +103,7 @@ class Crawler:
 
     @staticmethod
     def text_crawl(url, scope, content):
-        results = []
-        regex = re.escape(scope) + "[a-zA-Z0-9-._~!$&*+,;=:@?%/]+"
-
-        for match in re.findall(regex, content):
-            results.append(match[len(scope):])
-
-        return _filter(results)
+        return _filter(_extract_scoped_paths(scope, content))
 
     @staticmethod
     def html_crawl(url, scope, content):
