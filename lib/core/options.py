@@ -575,7 +575,11 @@ def merge_config(opt: Values) -> Values:
         if opt.async_mode is None
         else opt.async_mode
     )
-    opt.filter_threshold = opt.filter_threshold or config.safe_getint("general", "filter-threshold", 0)
+    opt.filter_threshold = (
+        config.safe_getint("general", "filter-threshold", 0)
+        if opt.filter_threshold is None
+        else opt.filter_threshold
+    )
     opt.include_status_codes = opt.include_status_codes or config.safe_get(
         "general", "include-status"
     )
@@ -602,8 +606,10 @@ def merge_config(opt: Values) -> Values:
     opt.force_recursive = opt.force_recursive or config.safe_getboolean(
         "general", "force-recursive"
     )
-    opt.recursion_depth = opt.recursion_depth or config.safe_getint(
-        "general", "max-recursion-depth"
+    opt.recursion_depth = (
+        config.safe_getint("general", "max-recursion-depth")
+        if opt.recursion_depth is None
+        else opt.recursion_depth
     )
     opt.recursion_status_codes = opt.recursion_status_codes or config.safe_get(
         "general", "recursion-status", "100-999"
@@ -672,9 +678,15 @@ def merge_config(opt: Values) -> Values:
     opt.filter_time = opt.filter_time or config.safe_get(
         "advanced-filtering", "filter-time", ""
     )
-    opt.max_time = opt.max_time or config.safe_getint("general", "max-time")
-    opt.target_max_time = opt.target_max_time or config.safe_getint(
-        "general", "target-max-time"
+    opt.max_time = (
+        config.safe_getint("general", "max-time")
+        if opt.max_time is None
+        else opt.max_time
+    )
+    opt.target_max_time = (
+        config.safe_getint("general", "target-max-time")
+        if opt.target_max_time is None
+        else opt.target_max_time
     )
     opt.exit_on_error = opt.exit_on_error or config.safe_getboolean(
         "general", "exit-on-error"
@@ -730,12 +742,22 @@ def merge_config(opt: Values) -> Values:
     opt.cookie = opt.cookie or config.safe_get("request", "cookie")
 
     # Connection
-    opt.delay = opt.delay or config.safe_getfloat("connection", "delay")
-    opt.timeout = opt.timeout or config.safe_getfloat("connection", "timeout", 7.5)
-    opt.max_retries = opt.max_retries or config.safe_getint(
-        "connection", "max-retries", 1
+    opt.delay = (
+        config.safe_getfloat("connection", "delay")
+        if opt.delay is None
+        else opt.delay
     )
-    opt.max_rate = opt.max_rate or config.safe_getint("connection", "max-rate")
+    opt.timeout = opt.timeout or config.safe_getfloat("connection", "timeout", 7.5)
+    opt.max_retries = (
+        config.safe_getint("connection", "max-retries", 1)
+        if opt.max_retries is None
+        else opt.max_retries
+    )
+    opt.max_rate = (
+        config.safe_getint("connection", "max-rate")
+        if opt.max_rate is None
+        else opt.max_rate
+    )
     opt.proxies = opt.proxies or config.safe_getlist("connection", "proxies")
     opt.proxies_file = opt.proxies_file or config.safe_get("connection", "proxies-file")
     opt.scheme = opt.scheme or config.safe_get(
