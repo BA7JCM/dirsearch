@@ -98,6 +98,11 @@ ENCODED_RESPONSES_BY_TARGET = {
     f"/{path}".encode(): (charset, body, gzip.compress(body, mtime=0))
     for path, charset, body in ENCODED_RESPONSE_CASES
 }
+REQUEST_BODY_CASES = (
+    ("ascii", b"name=plain&line=two\r\n"),
+    ("utf-8", "value=\u00e9&city=\u6771\u4eac\r\n".encode("utf-8")),
+    ("windows-1252", "value=\u00e9&currency=\u20ac\r\n".encode("cp1252")),
+)
 
 
 class RequestTargetTCPServer(socketserver.TCPServer):
@@ -105,6 +110,11 @@ class RequestTargetTCPServer(socketserver.TCPServer):
 
 
 class RequestTargetHandler(http.server.BaseHTTPRequestHandler):
+    def do_POST(self):
+        content_length = int(self.headers.get("content-length", "0"))
+        self.server.request_bodies.append(self.rfile.read(content_length))
+        self.do_GET()
+
     def do_GET(self):
         target = self.raw_requestline.split(b" ")[1]
         self.server.targets.append(target)
@@ -147,6 +157,7 @@ class RequestTargetServer:
         self.server = RequestTargetTCPServer(("127.0.0.1", 0), RequestTargetHandler)
         self.server.targets = []
         self.server.proxy_authorizations = []
+        self.server.request_bodies = []
         self.thread = threading.Thread(
             target=lambda: self.server.serve_forever(poll_interval=0.05),
             daemon=True,
@@ -171,6 +182,10 @@ class RequestTargetServer:
     @property
     def proxy_authorizations(self):
         return self.server.proxy_authorizations
+
+    @property
+    def request_bodies(self):
+        return self.server.request_bodies
 
 
 def normalize_percent_hex(target: bytes) -> bytes:
@@ -578,6 +593,27 @@ class TestRequesterPathPreservation(BaseRequesterTestCase):
             self.assertEqual(server.targets, [b"/admin?debug=true"])
 
 
+class TestRequesterBodyPreservation(BaseRequesterTestCase):
+    def test_sync_requester_preserves_data_file_encodings(self):
+        options["http_method"] = "POST"
+
+        with RequestTargetServer() as server:
+            for name, body in REQUEST_BODY_CASES:
+                with self.subTest(encoding=name):
+                    options["data"] = body
+                    requester = Requester()
+                    requester.set_url(server.url)
+                    try:
+                        requester.request(name)
+                    finally:
+                        requester.close()
+
+        self.assertEqual(
+            server.request_bodies,
+            [body for _, body in REQUEST_BODY_CASES],
+        )
+
+
 class TestRequesterProxyRouting(BaseRequesterTestCase):
     def test_proxy_scheme_never_bypasses_target_scheme(self):
         for proxy_scheme in ("http", "https"):
@@ -796,6 +832,39 @@ class TestAsyncRequesterPathPreservation(BaseRequesterTestCase, IsolatedAsyncioT
                 await requester.session.aclose()
 
             self.assertEqual(server.targets, [b"/admin?debug=true"])
+
+    async def test_async_requester_preserves_data_file_encodings(self):
+        options["http_method"] = "POST"
+
+        with RequestTargetServer() as server:
+            for name, body in REQUEST_BODY_CASES:
+                with self.subTest(encoding=name):
+                    options["data"] = body
+                    requester = AsyncRequester()
+                    requester.set_url(server.url)
+                    try:
+                        await requester.request(name)
+                    finally:
+                        await requester.close()
+
+        self.assertEqual(
+            server.request_bodies,
+            [body for _, body in REQUEST_BODY_CASES],
+        )
+
+    async def test_async_requester_preserves_inline_unicode_text(self):
+        options["http_method"] = "POST"
+        options["data"] = "value=\u00e9"
+
+        with RequestTargetServer() as server:
+            requester = AsyncRequester()
+            requester.set_url(server.url)
+            try:
+                await requester.request("inline")
+            finally:
+                await requester.close()
+
+        self.assertEqual(server.request_bodies, [options["data"].encode("utf-8")])
 
 
 class TestNativeRequesterPathPreservation(BaseRequesterTestCase):

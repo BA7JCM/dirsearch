@@ -187,7 +187,8 @@ Options:
                         Request backend: python, native (default: python)
     -d DATA, --data=DATA
                         HTTP request data
-    --data-file=PATH    File contains HTTP request data
+    --data-file=PATH    Read request body from file without encoding or newline
+                        conversion
     -H HEADERS, --header=HEADERS
                         HTTP request header, can use multiple flags
     --headers-file=PATH

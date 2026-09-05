@@ -206,7 +206,7 @@ def parse_options() -> dict[str, Any]:
 
     if opt.data_file:
         fd = _access_file(opt.data_file)
-        opt.data = fd.get_lines()
+        opt.data = FileUtils.read_bytes(fd.path)
 
     if opt.cert_file:
         _access_file(opt.cert_file)

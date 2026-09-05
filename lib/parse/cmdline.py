@@ -708,7 +708,7 @@ def parse_arguments(arguments: list[str] | None = None) -> Values:
         action="store",
         dest="data_file",
         metavar="PATH",
-        help="File contains HTTP request data"
+        help="Read request body from file without encoding or newline conversion"
     )
     request.add_option(
         "-H",

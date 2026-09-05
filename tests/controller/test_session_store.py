@@ -21,9 +21,12 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+from types import SimpleNamespace
 from unittest import TestCase
 
 from lib.controller.session import SessionStore
+from lib.core.dictionary import Dictionary
+from lib.core.exceptions import UnpicklingError
 
 
 class TestSessionStore(TestCase):
@@ -70,3 +73,47 @@ class TestSessionStore(TestCase):
                 [session["path"] for session in sessions],
                 sorted([nested_dir, root_file]),
             )
+
+    def test_request_body_bytes_round_trip_through_json_session(self):
+        body = "value=\u00e9&currency=\u20ac\r\n".encode("cp1252")
+        session_options = {"data": body, "output_formats": []}
+        controller = SimpleNamespace(
+            start_time="2026-01-01T00:00:00Z",
+            passed_urls=set(),
+            directories=[],
+            jobs_processed=0,
+            errors=0,
+            consecutive_errors=0,
+            base_path="",
+            url="https://example.com/",
+            old_session=False,
+            dictionary=Dictionary(),
+            output_history=[],
+        )
+
+        with tempfile.TemporaryDirectory() as session_dir:
+            store = SessionStore(session_options)
+            store.save(controller, session_dir, "")
+            payload = store.load(session_dir)
+            restored = store.restore_options(payload["options"])
+
+        self.assertEqual(restored["data"], body)
+
+    def test_bytes_marker_in_headers_remains_a_header_mapping(self):
+        marker = SessionStore.SESSION_BYTES_MARKER
+        headers = {marker: "header-value"}
+
+        restored = SessionStore({}).restore_options({"headers": headers})
+
+        self.assertEqual(restored["headers"], headers)
+
+    def test_invalid_request_body_encoding_is_rejected(self):
+        serialized = {
+            "data": {SessionStore.SESSION_BYTES_MARKER: "not base64!"}
+        }
+
+        with self.assertRaisesRegex(
+            UnpicklingError,
+            "Invalid binary session option: data",
+        ):
+            SessionStore({}).restore_options(serialized)

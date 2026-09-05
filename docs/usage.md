@@ -139,6 +139,33 @@ python3 dirsearch.py -u https://target --filter-header "x-cache: fallback"
 python3 dirsearch.py -u https://target --match-header-regex "etag: W/.+"
 ```
 
+## Request Bodies
+
+For a short request body, pass it directly:
+
+```sh
+python3 dirsearch.py -u https://target -m POST -d "username=admin&active=true"
+```
+
+For a saved or multiline body, use `--data-file`:
+
+```sh
+python3 dirsearch.py -u https://target -m POST --data-file body.txt
+```
+
+dirsearch sends the file exactly as saved. ASCII, UTF-8, Windows-encoded files,
+CRLF, LF, mixed line endings, and a final newline require no dirsearch-specific
+conversion option. If the server requires an explicit character set, declare it
+in the content type:
+
+```sh
+python3 dirsearch.py -u https://target -m POST --data-file body.txt \
+  -H "Content-Type: application/x-www-form-urlencoded; charset=windows-1252"
+```
+
+Use `--data-file` for a body only. Use `--raw request.txt` when the file contains
+the complete HTTP request line, headers, and body.
+
 ## Raw Requests
 
 dirsearch can import a raw request from a file:

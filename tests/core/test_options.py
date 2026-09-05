@@ -10,6 +10,48 @@ from lib.core.options import parse_options
 
 
 class TestOptions(TestCase):
+    def test_data_file_preserves_request_body_bytes(self):
+        bodies = {
+            "ascii": b"alpha=1&beta=2\r\nline=two\n",
+            "utf-8": "value=\u00e9&city=\u6771\u4eac\r\n".encode("utf-8"),
+            "windows-1252": "value=\u00e9&currency=\u20ac\r\n".encode("cp1252"),
+        }
+
+        for encoding, body in bodies.items():
+            with self.subTest(encoding=encoding), tempfile.TemporaryDirectory() as directory:
+                data_path = os.path.join(directory, "request-body.bin")
+                with open(data_path, "wb") as data_file:
+                    data_file.write(body)
+                args = [
+                    "dirsearch.py",
+                    "--wordlist-status",
+                    "-e",
+                    "php",
+                    "--data-file",
+                    data_path,
+                ]
+
+                with patch("sys.argv", args):
+                    parsed = parse_options()
+
+            self.assertEqual(parsed["data"], body)
+
+    def test_inline_data_remains_text(self):
+        body = "value=\u00e9"
+        args = [
+            "dirsearch.py",
+            "--wordlist-status",
+            "-e",
+            "php",
+            "--data",
+            body,
+        ]
+
+        with patch("sys.argv", args):
+            parsed = parse_options()
+
+        self.assertEqual(parsed["data"], body)
+
     def test_aggressive_wordlist_category_is_opt_in(self):
         args = [
             "dirsearch.py",
