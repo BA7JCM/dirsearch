@@ -36,7 +36,7 @@ class MimeTypeUtils:
         try:
             json.loads(content)
             return True
-        except json.decoder.JSONDecodeError:
+        except (json.decoder.JSONDecodeError, UnicodeDecodeError):
             return False
 
     @staticmethod

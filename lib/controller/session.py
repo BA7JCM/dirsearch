@@ -18,6 +18,8 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import os
 from typing import Any
@@ -31,6 +33,7 @@ from lib.view.terminal import interface
 
 class SessionStore:
     SESSION_VERSION = 1
+    SESSION_BYTES_MARKER = "__dirsearch_bytes_b64__"
     SESSION_OPTION_SET_KEYS = {
         "recursion_status_codes",
         "include_status_codes",
@@ -211,6 +214,20 @@ class SessionStore:
                 restored[key] = set(value)
             elif key in self.SESSION_OPTION_TUPLE_KEYS and value is not None:
                 restored[key] = tuple(value)
+            elif (
+                key == "data"
+                and isinstance(value, dict)
+                and set(value) == {self.SESSION_BYTES_MARKER}
+            ):
+                try:
+                    restored[key] = base64.b64decode(
+                        value[self.SESSION_BYTES_MARKER],
+                        validate=True,
+                    )
+                except (binascii.Error, TypeError, ValueError) as error:
+                    raise UnpicklingError(
+                        f"Invalid binary session option: {key}"
+                    ) from error
             else:
                 restored[key] = value
         return restored
@@ -240,7 +257,11 @@ class SessionStore:
     def _serialize_options(self) -> dict[str, Any]:
         serialized: dict[str, Any] = {}
         for key, value in self.options.items():
-            if isinstance(value, (set, tuple)):
+            if key == "data" and isinstance(value, bytes):
+                serialized[key] = {
+                    self.SESSION_BYTES_MARKER: base64.b64encode(value).decode("ascii")
+                }
+            elif isinstance(value, (set, tuple)):
                 serialized[key] = list(value)
             else:
                 serialized[key] = value

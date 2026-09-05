@@ -17,7 +17,7 @@
 
 from unittest import TestCase
 
-from lib.utils.mimetype import MimeTypeUtils
+from lib.utils.mimetype import MimeTypeUtils, guess_mimetype
 
 
 class TestMimeTypeUtils(TestCase):
@@ -46,3 +46,11 @@ class TestMimeTypeUtils(TestCase):
 
     def test_is_query_string(self):
         self.assertTrue(MimeTypeUtils.is_query_string("foo=1&bar=&foobar=2"), "Failed to detect query string")
+
+    def test_guess_mimetype_accepts_windows_encoded_query_string(self):
+        content = "value=\u00e9&currency=\u20ac".encode("cp1252")
+
+        self.assertEqual(
+            guess_mimetype(content),
+            "application/x-www-form-urlencoded",
+        )

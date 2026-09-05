@@ -206,10 +206,7 @@ def parse_options() -> dict[str, Any]:
 
     if opt.data_file:
         fd = _access_file(opt.data_file)
-        with open(
-            fd.path, "r", encoding="utf-8", errors="replace", newline=""
-        ) as data_file:
-            opt.data = data_file.read()
+        opt.data = FileUtils.read_bytes(fd.path)
 
     if opt.cert_file:
         _access_file(opt.cert_file)

@@ -728,7 +728,7 @@ class AsyncRequester(BaseRequester):
                     options["http_method"],
                     url,
                     headers=self.headers,
-                    data=options["data"],
+                    content=options["data"],
                     extensions={
                         "target": (
                             url
