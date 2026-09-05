@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 import sys
 import time
@@ -180,6 +181,8 @@ def parse_options() -> dict[str, Any]:
     if opt.wordlist_max_size < 1:
         print("--wordlist-max-size must be greater than zero")
         sys.exit(1)
+
+    validate_numeric_options(opt)
 
     if opt.wordlist_backend not in WORDLIST_BACKENDS:
         print("--wordlist-backend must be one of: " + ", ".join(WORDLIST_BACKENDS))
@@ -456,6 +459,25 @@ def _validate_advanced_mode(value: str, option_name: str) -> None:
 
     print(f"{option_name} must be either 'and' or 'or'")
     sys.exit(1)
+
+
+def validate_numeric_options(opt: Any) -> None:
+    if not math.isfinite(opt.timeout) or opt.timeout <= 0:
+        print("--timeout must be finite and greater than zero")
+        sys.exit(1)
+
+    if not math.isfinite(opt.delay) or opt.delay < 0:
+        print("--delay must be finite and zero or greater")
+        sys.exit(1)
+
+    for attribute, option_name in (
+        ("max_retries", "--retries"),
+        ("max_rate", "--max-rate"),
+        ("recursion_depth", "--max-recursion-depth"),
+    ):
+        if getattr(opt, attribute) < 0:
+            print(f"{option_name} must be zero or greater")
+            sys.exit(1)
 
 
 def _is_cli_flag_present(*flags: str) -> bool:
@@ -747,7 +769,11 @@ def merge_config(opt: Values) -> Values:
         if opt.delay is None
         else opt.delay
     )
-    opt.timeout = opt.timeout or config.safe_getfloat("connection", "timeout", 7.5)
+    opt.timeout = (
+        config.safe_getfloat("connection", "timeout", 7.5)
+        if opt.timeout is None
+        else opt.timeout
+    )
     opt.max_retries = (
         config.safe_getint("connection", "max-retries", 1)
         if opt.max_retries is None

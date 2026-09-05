@@ -84,7 +84,7 @@ Options:
     --force-recursive   Do recursive brute-force for every found path, not
                         only directories
     -R DEPTH, --max-recursion-depth=DEPTH
-                        Maximum recursion depth
+                        Maximum recursion depth (0 means unlimited)
     --recursion-status=CODES
                         Valid status codes to perform recursive scan, support
                         ranges (separated by commas)
@@ -206,8 +206,8 @@ Options:
     --cookie=COOKIE
 
   Connection Settings:
-    --timeout=TIMEOUT   Connection timeout
-    --delay=DELAY       Delay between requests
+    --timeout=TIMEOUT   Connection timeout in seconds (greater than 0)
+    --delay=DELAY       Delay between requests in seconds (0 or greater)
     -p PROXY, --proxy=PROXY
                         Proxy URL (HTTP/SOCKS), can use multiple flags
     --proxies-file=PATH
@@ -219,8 +219,8 @@ Options:
     --tor               Use Tor network as proxy
     --scheme=SCHEME     Scheme for raw request or if there is no scheme in the
                         URL (Default: auto-detect)
-    --max-rate=RATE     Max requests per second
-    --retries=RETRIES   Number of retries for failed requests
+    --max-rate=RATE     Maximum requests per second (0 means unlimited)
+    --retries=RETRIES   Number of retries for failed requests (0 or greater)
     --ip=IP             Server IP address
     --interface=NETWORK_INTERFACE
                         Network interface to use

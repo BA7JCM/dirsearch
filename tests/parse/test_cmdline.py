@@ -43,6 +43,24 @@ class TestCommandLineHelp(TestCase):
             "Read request body from file without encoding or newline conversion",
             short_output.replace("\n                        ", " "),
         )
+        normalized_output = short_output.replace("\n                        ", " ")
+        self.assertIn("Maximum recursion depth (0 means unlimited)", normalized_output)
+        self.assertIn(
+            "Connection timeout in seconds (greater than 0)",
+            normalized_output,
+        )
+        self.assertIn(
+            "Delay between requests in seconds (0 or greater)",
+            normalized_output,
+        )
+        self.assertIn(
+            "Maximum requests per second (0 means unlimited)",
+            normalized_output,
+        )
+        self.assertIn(
+            "Number of retries for failed requests (0 or greater)",
+            normalized_output,
+        )
 
     def test_help_change_does_not_affect_normal_parsing(self):
         parsed = parse_arguments(

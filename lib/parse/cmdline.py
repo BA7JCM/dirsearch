@@ -406,7 +406,7 @@ def parse_arguments(arguments: list[str] | None = None) -> Values:
         type="int",
         dest="recursion_depth",
         metavar="DEPTH",
-        help="Maximum recursion depth",
+        help="Maximum recursion depth (0 means unlimited)",
     )
     general.add_option(
         "--recursion-status",
@@ -774,14 +774,14 @@ def parse_arguments(arguments: list[str] | None = None) -> Values:
         action="store",
         type="float",
         dest="timeout",
-        help="Connection timeout",
+        help="Connection timeout in seconds (greater than 0)",
     )
     connection.add_option(
         "--delay",
         action="store",
         type="float",
         dest="delay",
-        help="Delay between requests",
+        help="Delay between requests in seconds (0 or greater)",
     )
     connection.add_option(
         "-p",
@@ -828,7 +828,7 @@ def parse_arguments(arguments: list[str] | None = None) -> Values:
         type="int",
         dest="max_rate",
         metavar="RATE",
-        help="Max requests per second",
+        help="Maximum requests per second (0 means unlimited)",
     )
     connection.add_option(
         "--retries",
@@ -836,7 +836,7 @@ def parse_arguments(arguments: list[str] | None = None) -> Values:
         type="int",
         dest="max_retries",
         metavar="RETRIES",
-        help="Number of retries for failed requests",
+        help="Number of retries for failed requests (0 or greater)",
     )
     connection.add_option("--ip", action="store", dest="ip", help="Server IP address")
     connection.add_option("--interface", action="store", dest="network_interface", help="Network interface to use")
